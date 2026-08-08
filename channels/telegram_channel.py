@@ -107,12 +107,12 @@ class TelegramChannel(BaseChannel):
             return
         await update.message.reply_text(
             "🖥️ *MROS Agent online*\n\n"
-            "আমার PC control করতে পারো — Cursor খোলা, folder open, "
-            "screenshot, mouse/keyboard, model select ইত্যাদি।\n\n"
+            "You can control this PC — open Cursor, folders, "
+            "screenshots, mouse/keyboard, model select, and more.\n\n"
             "Examples:\n"
             "• `open D:\\\\Projects\\\\mros in Cursor`\n"
-            "• `screenshot নাও আর বলো এখন কি দেখা যাচ্ছে`\n"
-            "• `Cursor এ claude-sonnet model select করো`\n\n"
+            "• `take a screenshot and tell me what is on screen`\n"
+            "• `select the claude-sonnet model in Cursor`\n\n"
             "/help · /reset · /id",
             parse_mode=ParseMode.MARKDOWN,
         )

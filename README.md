@@ -1,16 +1,16 @@
 # MROS — Multi-channel Remote OS Agent
 
-Telegram থেকে তোমার Windows PC control করার advanced AI agent।  
-Tool-calling দিয়ে Cursor IDE, files, screenshot+vision, mouse/keyboard — সব করতে পারে।  
-ভবিষ্যতে Web ও WhatsApp channel যোগ করার architecture আছে।
+An advanced AI agent that controls your Windows PC from Telegram using tool calling.
+It can drive Cursor IDE, manage files, take screenshots with vision, and control mouse/keyboard.
+The architecture is ready for future Web and WhatsApp channels.
 
 ## Features
 
-- **Telegram control** — chat দিয়ে PC চালাও (allowlist security)
+- **Telegram control** — chat to control your PC (allowlist security)
 - **30+ tools** — files, apps, Cursor IDE, windows, shell, clipboard, input
-- **Screenshots + Vision** — স্ক্রিন দেখে বুঝে কাজ করে, শেষে তোমাকে screenshot পাঠায়
-- **Cursor IDE** — folder open, chat/composer, model select, command palette
-- **Extensible channels** — `channels/whatsapp_channel.py`, `channels/web_channel.py` stubs
+- **Screenshots + Vision** — sees the screen, acts, then sends screenshots back to you
+- **Cursor IDE** — open folders, chat/composer, model select, command palette
+- **Extensible channels** — stubs in `channels/whatsapp_channel.py`, `channels/web_channel.py`
 
 ## Quick start
 
@@ -25,12 +25,12 @@ pip install -r requirements.txt
 
 ### 2. Telegram bot
 
-1. Telegram-এ [@BotFather](https://t.me/BotFather) → `/newbot` → token নাও
-2. Bot-এ `/start` দাও, তারপর [@userinfobot](https://t.me/userinfobot) থেকে নিজের numeric **user id** নাও
+1. Open Telegram [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token
+2. Start your bot with `/start`, then get your numeric **user id** from [@userinfobot](https://t.me/userinfobot)
 
 ## LLM providers
 
-`.env` এ শুধু `LLM_PROVIDER` + `LLM_API_KEY` সেট করলেই base URL ও default model অটো সেট হয়।
+Set `LLM_PROVIDER` + `LLM_API_KEY` in `.env` and the base URL / default models are filled automatically.
 
 | `LLM_PROVIDER` | Service | Default model |
 |----------------|---------|---------------|
@@ -48,7 +48,7 @@ pip install -r requirements.txt
 | `lmstudio` | LM Studio (local) | `local-model` |
 | `custom` | Any OpenAI-compatible URL | set `LLM_BASE_URL` |
 
-**Gemini (AI Studio) উদাহরণ:**
+**Gemini (AI Studio) example:**
 
 ```env
 LLM_PROVIDER=gemini
@@ -60,9 +60,9 @@ LLM_API_KEY=your_aistudio_key
 
 Key: [Google AI Studio](https://aistudio.google.com/apikey)
 
-Screenshot analyze এর জন্য vision-capable model দরকার (`gemini-2.5-flash`, `gpt-4o`, Claude, Pixtral, ইত্যাদি)।
+Screenshot analysis needs a vision-capable model (`gemini-2.5-flash`, `gpt-4o`, Claude, Pixtral, etc.).
 
-`LLM_BASE_URL` / `LLM_MODEL` / `LLM_VISION_MODEL` খালি রাখলে provider default ব্যবহার হয়; ভরলে override হয়।
+Leave `LLM_BASE_URL` / `LLM_MODEL` / `LLM_VISION_MODEL` empty to use provider defaults; set them to override.
 
 ### 4. Configure `.env`
 
@@ -71,14 +71,14 @@ copy .env.example .env
 notepad .env
 ```
 
-অবশ্যই সেট করো:
+Required:
 
-- `LLM_PROVIDER` — যেমন `gemini`, `openai`, `openrouter`
-- `LLM_API_KEY` — সেই provider-এর key
+- `LLM_PROVIDER` — e.g. `gemini`, `openai`, `openrouter`
+- `LLM_API_KEY` — key for that provider
 - `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_ALLOWED_USERS` ← তোমার Telegram user id
-- `AGENT_WORKSPACE` ← default folder root
-- `CURSOR_PATH` ← optional, auto-detect না হলে
+- `TELEGRAM_ALLOWED_USERS` — your Telegram user id
+- `AGENT_WORKSPACE` — default folder root for relative paths
+- `CURSOR_PATH` — optional; leave empty for auto-detect
 
 ### 5. Run
 
@@ -86,7 +86,7 @@ notepad .env
 python main.py
 ```
 
-### List models (model ID দেখতে)
+### List models (get model IDs)
 
 ```powershell
 python list_models.py --list
@@ -95,14 +95,14 @@ python list_models.py openrouter --filter claude
 python list_models.py openai --key sk-...
 ```
 
-অথবা `list_models.bat` — দেখানো **Model ID** `.env`-এ `LLM_MODEL=` এ বসাও।
+Or use `list_models.bat` — copy a **Model ID** into `.env` as `LLM_MODEL=`.
 
-Telegram-এ bot-এ message পাঠাও:
+Message your Telegram bot, for example:
 
 - `open C:\Users\ifois\Desktop\Windsurf\mros in Cursor`
-- `screenshot নাও, কি দেখা যাচ্ছে বলো`
-- `Cursor এ claude sonnet model select করো`
-- `Notepad খুলে Hello World লেখো`
+- `take a screenshot and tell me what is on screen`
+- `select the claude sonnet model in Cursor`
+- `open Notepad and type Hello World`
 
 ## Architecture
 
@@ -125,19 +125,19 @@ mros/
 
 ## Safety
 
-- শুধু `TELEGRAM_ALLOWED_USERS`-এ থাকা id চালাতে পারবে
-- Empty allowlist = সবাই block (safe default)
-- Delete / shell tools marked destructive
-- Agent PC-তে mouse/keyboard control করে — run করার সময় PC unlocked থাকা ভালো
+- Only user IDs in `TELEGRAM_ALLOWED_USERS` can control the PC
+- Empty allowlist = everyone blocked (safe default)
+- Delete / shell tools are marked destructive
+- The agent uses mouse/keyboard — keep the PC unlocked while it runs
 
-## Example prompts (Bangla / English)
+## Example prompts
 
-- `D ড্রাইভের Projects ফোল্ডার Cursor এ খোলো`
-- `এখন screen এ কি আছে? screenshot নিয়ে বলো`
-- `Cursor chat খুলে এই prompt দাও: refactor main.py`
-- `Chrome এ github.com খোলো`
-- `Desktop এ test.txt বানিয়ে লেখো hello`
+- `Open the Projects folder on D: in Cursor`
+- `What is on screen right now? Take a screenshot and tell me`
+- `Open Cursor chat and send this prompt: refactor main.py`
+- `Open github.com in Chrome`
+- `Create test.txt on the Desktop with hello`
 
 ## Future channels
 
-`BaseChannel` implement করে Web (FastAPI+WS) বা WhatsApp (Cloud API) যোগ করো — agent/tools আলাদা থাকবে, শুধু channel বদলাবে।
+Implement `BaseChannel` for Web (FastAPI + WebSocket) or WhatsApp (Cloud API). The agent and tools stay the same; only the channel changes.

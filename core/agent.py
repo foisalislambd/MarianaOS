@@ -39,7 +39,7 @@ You can control the PC using tools: open apps/folders (especially Cursor IDE), m
 ## Response style
 - Short status while working via tools.
 - Final message: what was done + any important paths/results.
-- Speak in the user's language (Bangla or English) matching their message.
+- Reply in English.
 """
 
 
