@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     telegram_allowed_users: str = Field("", alias="TELEGRAM_ALLOWED_USERS")
 
     # Agent
-    agent_name: str = Field("MROS", alias="AGENT_NAME")
+    agent_name: str = Field("MarianaOS", alias="AGENT_NAME")
     agent_max_tool_rounds: int = Field(25, alias="AGENT_MAX_TOOL_ROUNDS")
     agent_screenshot_dir: str = Field("data/screenshots", alias="AGENT_SCREENSHOT_DIR")
     agent_workspace: str = Field(str(Path.home() / "Desktop"), alias="AGENT_WORKSPACE")

@@ -1,4 +1,4 @@
-"""MROS — Multi-channel Remote OS Agent entrypoint."""
+"""MarianaOS — Multi-channel Remote OS Agent entrypoint."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from utils.logging import console, get_logger, setup_logging
 async def main() -> None:
     settings = get_settings()
     setup_logging(settings.log_level)
-    log = get_logger("mros")
+    log = get_logger("marianaos")
     llm_cfg = settings.llm
 
     console.print(f"[bold cyan]{settings.agent_name}[/] — Desktop AI Agent")

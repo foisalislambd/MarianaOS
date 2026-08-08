@@ -17,7 +17,7 @@ from core.llm_types import LLMTurn, ToolCallRequest
 from core.providers.base import BaseLLMProvider
 from utils.logging import get_logger
 
-log = get_logger("mros.llm.openai_compat")
+log = get_logger("marianaos.llm.openai_compat")
 
 
 class OpenAICompatProvider(BaseLLMProvider):

@@ -1,4 +1,4 @@
-# MROS — Multi-channel Remote OS Agent
+# MarianaOS — Multi-channel Remote OS Agent
 
 An advanced AI agent that controls your Windows PC from Telegram using tool calling.
 It can drive Cursor IDE, manage files, take screenshots with vision, and control mouse/keyboard.
@@ -17,7 +17,7 @@ The architecture is ready for future Web and WhatsApp channels.
 ### 1. Python venv + install
 
 ```powershell
-cd C:\Users\ifois\Desktop\Windsurf\mros
+cd C:\Users\ifois\Desktop\Windsurf\MarianaOS
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -76,7 +76,7 @@ Or use `list_models.bat` — copy a **Model ID** into `.env` as `LLM_MODEL=`.
 
 Message your Telegram bot, for example:
 
-- `open C:\Users\ifois\Desktop\Windsurf\mros in Cursor`
+- `open C:\Users\ifois\Desktop\Windsurf\MarianaOS in Cursor`
 - `take a screenshot and tell me what is on screen`
 - `select the claude sonnet model in Cursor`
 - `open Notepad and type Hello World`
@@ -84,12 +84,12 @@ Message your Telegram bot, for example:
 ## Architecture
 
 ```
-mros/
+MarianaOS/
 ├── main.py                 # Entrypoint
 ├── config/settings.py      # .env settings
 ├── core/
 │   ├── agent.py            # Tool-calling agent loop
-│   ├── llm.py              # OpenAI-compatible client
+│   ├── llm.py              # Provider facade
 │   └── memory.py           # Per-user chat memory
 ├── tools/                  # PC control tools
 ├── channels/

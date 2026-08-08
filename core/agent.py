@@ -12,7 +12,7 @@ from core.memory import ConversationMemory
 from tools.base import ToolRegistry, ToolResult
 from utils.logging import get_logger
 
-log = get_logger("mros.agent")
+log = get_logger("marianaos.agent")
 
 ProgressCallback = Callable[[str], Awaitable[None]]
 

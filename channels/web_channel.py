@@ -5,7 +5,7 @@ from __future__ import annotations
 from channels.base import BaseChannel, OutboundMessage
 from utils.logging import get_logger
 
-log = get_logger("mros.web")
+log = get_logger("marianaos.web")
 
 
 class WebChannel(BaseChannel):

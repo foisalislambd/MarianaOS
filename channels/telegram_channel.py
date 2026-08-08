@@ -18,7 +18,7 @@ from telegram.ext import (
 from channels.base import BaseChannel, InboundMessage, OutboundMessage
 from utils.logging import get_logger
 
-log = get_logger("mros.telegram")
+log = get_logger("marianaos.telegram")
 
 
 class TelegramChannel(BaseChannel):
@@ -106,11 +106,11 @@ class TelegramChannel(BaseChannel):
             )
             return
         await update.message.reply_text(
-            "🖥️ *MROS Agent online*\n\n"
+            "🖥️ *MarianaOS Agent online*\n\n"
             "You can control this PC — open Cursor, folders, "
             "screenshots, mouse/keyboard, model select, and more.\n\n"
             "Examples:\n"
-            "• `open D:\\\\Projects\\\\mros in Cursor`\n"
+            "• `open D:\\\\Projects\\\\MarianaOS in Cursor`\n"
             "• `take a screenshot and tell me what is on screen`\n"
             "• `select the claude-sonnet model in Cursor`\n\n"
             "/help · /reset · /id",

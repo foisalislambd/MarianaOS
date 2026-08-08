@@ -21,7 +21,7 @@ from core.llm_types import LLMTurn, ToolCallRequest, openai_tools_to_declaration
 from core.providers.base import BaseLLMProvider
 from utils.logging import get_logger
 
-log = get_logger("mros.llm.gemini")
+log = get_logger("marianaos.llm.gemini")
 
 
 class GeminiProvider(BaseLLMProvider):

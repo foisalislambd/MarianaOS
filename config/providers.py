@@ -69,8 +69,8 @@ _add(
         default_model="google/gemini-2.5-flash",
         default_vision_model="google/gemini-2.5-flash",
         default_headers={
-            "HTTP-Referer": "https://github.com/mros-agent",
-            "X-Title": "MROS Agent",
+            "HTTP-Referer": "https://github.com/marianaos-agent",
+            "X-Title": "MarianaOS Agent",
         },
         notes="Get key: https://openrouter.ai/keys — access many models via one key",
     )

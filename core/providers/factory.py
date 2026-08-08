@@ -9,7 +9,7 @@ from core.providers.base import BaseLLMProvider
 from core.providers.openai_compat import OpenAICompatProvider
 from utils.logging import get_logger
 
-log = get_logger("mros.llm.factory")
+log = get_logger("marianaos.llm.factory")
 
 # Providers that speak real OpenAI Chat Completions (per their own docs).
 OPENAI_COMPAT: Set[str] = {
