@@ -59,6 +59,14 @@ Required:
 
 ### 5. Run
 
+Double-click `run.bat` — it will:
+1. Create `.venv` if missing
+2. Activate the venv
+3. Install dependencies if needed
+4. Start MarianaOS
+
+Or manually:
+
 ```powershell
 python main.py
 ```
