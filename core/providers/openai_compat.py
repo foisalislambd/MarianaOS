@@ -158,4 +158,7 @@ class OpenAICompatProvider(BaseLLMProvider):
 
 
 def _strip_private(message: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: v for k, v in message.items() if not k.startswith("_")}
+    """Drop provider-private keys (_native, _tool_names, …) before OpenAI wire format."""
+    out = {k: v for k, v in message.items() if not k.startswith("_")}
+    # OpenAI tool role: name is optional; keep it when present
+    return out

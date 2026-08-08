@@ -215,5 +215,8 @@ class AnthropicProvider(BaseLLMProvider):
 def _parse_data_url(data_url: str) -> tuple[str, bytes]:
     m = re.match(r"^data:([^;]+);base64,(.+)$", data_url, re.DOTALL)
     if m:
-        return m.group(1), base64.standard_b64decode(m.group(2))
+        mime = m.group(1).strip().lower()
+        if mime == "image/jpg":
+            mime = "image/jpeg"
+        return mime, base64.standard_b64decode(m.group(2))
     return "image/png", base64.standard_b64decode(data_url)

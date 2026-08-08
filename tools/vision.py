@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import base64
+import mimetypes
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from tools.base import BaseTool, ToolParam, ToolResult
 
@@ -37,12 +38,16 @@ class AnalyzeScreenshotTool(BaseTool):
     async def execute(self, path: str, question: str, **_: Any) -> ToolResult:
         p = Path(path)
         if not p.exists():
-            # Try resolving relative to CWD
             return ToolResult(success=False, output=f"Screenshot not found: {path}")
 
         raw = p.read_bytes()
         b64 = base64.standard_b64encode(raw).decode("ascii")
-        data_url = f"data:image/png;base64,{b64}"
+        mime, _ = mimetypes.guess_type(str(p))
+        if not mime or not mime.startswith("image/"):
+            mime = "image/png"
+        if mime == "image/jpg":
+            mime = "image/jpeg"
+        data_url = f"data:{mime};base64,{b64}"
 
         prompt = (
             "You are helping a desktop AI agent control a Windows PC. "

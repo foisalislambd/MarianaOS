@@ -195,7 +195,7 @@ class GeminiProvider(BaseLLMProvider):
             fc = getattr(part, "function_call", None)
             if fc:
                 name = fc.name or "unknown"
-                args = dict(fc.args or {})
+                args = _to_plain_dict(getattr(fc, "args", None))
                 call_id = f"call_{uuid.uuid4().hex[:24]}"
                 tool_calls.append(
                     ToolCallRequest(id=call_id, name=name, arguments=args)
@@ -256,7 +256,8 @@ class GeminiProvider(BaseLLMProvider):
 
     async def list_models(self) -> List[str]:
         ids: List[str] = []
-        pager = await self._client.aio.models.list()
+        # aio.models.list() returns AsyncPager — do not await it
+        pager = self._client.aio.models.list()
         async for m in pager:
             name = getattr(m, "name", None) or ""
             mid = name.split("/")[-1] if name else ""
@@ -284,5 +285,21 @@ def _tool_name_from_history(messages: List[Dict[str, Any]], tool_msg: Dict[str, 
 def _parse_data_url(data_url: str) -> tuple[str, bytes]:
     m = re.match(r"^data:([^;]+);base64,(.+)$", data_url, re.DOTALL)
     if m:
-        return m.group(1), base64.standard_b64decode(m.group(2))
+        mime = m.group(1).strip().lower()
+        if mime == "image/jpg":
+            mime = "image/jpeg"
+        return mime, base64.standard_b64decode(m.group(2))
     return "image/png", base64.standard_b64decode(data_url)
+
+
+def _to_plain_dict(value: Any) -> Dict[str, Any]:
+    """Convert Gemini MapComposite / nested structures to plain JSON-safe dicts."""
+    if value is None:
+        return {}
+    try:
+        return json.loads(json.dumps(value, default=str))
+    except Exception:
+        try:
+            return dict(value)
+        except Exception:
+            return {"value": str(value)}
