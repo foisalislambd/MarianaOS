@@ -1,4 +1,6 @@
 # MROS — Multi-channel Remote OS Agent
+google-genai>=1.40.0
+anthropic>=0.49.0
 python-telegram-bot[job-queue]>=21.6
 openai>=1.55.0
 httpx>=0.27.0

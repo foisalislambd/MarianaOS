@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -15,7 +14,6 @@ from utils.logging import get_logger
 
 log = get_logger("mros.agent")
 
-# Callback: progress updates to the channel (status text only — media sent at end)
 ProgressCallback = Callable[[str], Awaitable[None]]
 
 
@@ -104,7 +102,7 @@ class Agent:
         for round_i in range(self.settings.agent_max_tool_rounds):
             log.info("Agent round %s/%s", round_i + 1, self.settings.agent_max_tool_rounds)
             try:
-                resp = await self.llm.chat(
+                turn = await self.llm.complete(
                     messages=messages,
                     tools=self.tools.openai_tools(),
                 )
@@ -117,51 +115,23 @@ class Agent:
                     trace,
                 )
 
-            choice = resp.choices[0]
-            msg = choice.message
-            tool_calls = msg.tool_calls or []
+            messages.append(turn.assistant_message)
 
-            assistant_msg: Dict[str, Any] = {
-                "role": "assistant",
-                "content": msg.content or "",
-            }
-            if tool_calls:
-                assistant_msg["tool_calls"] = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments or "{}",
-                        },
-                    }
-                    for tc in tool_calls
-                ]
-            messages.append(assistant_msg)
-
-            if not tool_calls:
-                final_text = (msg.content or "").strip() or "Done."
+            if not turn.tool_calls:
+                final_text = (turn.text or "").strip() or "Done."
                 break
 
-            for tc in tool_calls:
-                name = tc.function.name
-                try:
-                    args = json.loads(tc.function.arguments or "{}")
-                    if not isinstance(args, dict):
-                        args = {}
-                except json.JSONDecodeError:
-                    args = {}
-
+            for tc in turn.tool_calls:
                 if on_progress:
-                    await on_progress(f"🔧 {name}…")
+                    await on_progress(f"🔧 {tc.name}…")
 
-                log.info("Tool call: %s(%s)", name, args)
+                log.info("Tool call: %s(%s)", tc.name, tc.arguments)
                 result: ToolResult = await self.tools.call(
-                    name,
-                    args,
+                    tc.name,
+                    tc.arguments,
                     require_confirmation=self.settings.require_confirmation,
                 )
-                trace.append(f"{name}: {'ok' if result.success else 'fail'}")
+                trace.append(f"{tc.name}: {'ok' if result.success else 'fail'}")
 
                 if result.media_paths:
                     all_media.extend(result.media_paths)
@@ -170,6 +140,7 @@ class Agent:
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
+                        "name": tc.name,
                         "content": result.to_llm(),
                     }
                 )

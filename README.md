@@ -30,39 +30,16 @@ pip install -r requirements.txt
 
 ## LLM providers
 
-Set `LLM_PROVIDER` + `LLM_API_KEY` in `.env` and the base URL / default models are filled automatically.
+| `LLM_PROVIDER` | SDK / API | Notes |
+|----------------|-----------|-------|
+| `gemini` | **Native** `google-genai` | AI Studio — proper tool calling + thought signatures |
+| `anthropic` | **Native** `anthropic` | Claude Messages + tool_use |
+| `openai` | OpenAI SDK | Official Chat Completions |
+| `openrouter` | OpenAI-compatible | Many models, one key |
+| `groq` / `deepseek` / `mistral` / `xai` / … | OpenAI-compatible | Per each provider's OpenAI-compat docs |
+| `ollama` / `lmstudio` | OpenAI-compatible | Local |
 
-| `LLM_PROVIDER` | Service | Default model |
-|----------------|---------|---------------|
-| `gemini` | Google AI Studio | `gemini-2.5-flash` |
-| `openai` | OpenAI | `gpt-4o` |
-| `anthropic` | Anthropic Claude | `claude-sonnet-4-5` |
-| `openrouter` | OpenRouter | `google/gemini-2.5-flash` |
-| `groq` | Groq | `llama-3.3-70b-versatile` |
-| `deepseek` | DeepSeek | `deepseek-chat` |
-| `mistral` | Mistral AI | `mistral-large-latest` |
-| `xai` | xAI Grok | `grok-2-latest` |
-| `together` | Together AI | Llama 3.1 70B |
-| `fireworks` | Fireworks AI | Llama 3.3 70B |
-| `ollama` | Ollama (local) | `llama3.2` |
-| `lmstudio` | LM Studio (local) | `local-model` |
-| `custom` | Any OpenAI-compatible URL | set `LLM_BASE_URL` |
-
-**Gemini (AI Studio) example:**
-
-```env
-LLM_PROVIDER=gemini
-LLM_API_KEY=your_aistudio_key
-# optional:
-# LLM_MODEL=gemini-2.5-pro
-# LLM_VISION_MODEL=gemini-2.5-flash
-```
-
-Key: [Google AI Studio](https://aistudio.google.com/apikey)
-
-Screenshot analysis needs a vision-capable model (`gemini-2.5-flash`, `gpt-4o`, Claude, Pixtral, etc.).
-
-Leave `LLM_BASE_URL` / `LLM_MODEL` / `LLM_VISION_MODEL` empty to use provider defaults; set them to override.
+Set `LLM_PROVIDER` + `LLM_API_KEY`. Leave `LLM_MODEL` empty to use defaults.
 
 ### 4. Configure `.env`
 

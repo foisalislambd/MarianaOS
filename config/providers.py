@@ -43,25 +43,22 @@ _add(
     ProviderPreset(
         id="gemini",
         name="Google AI Studio (Gemini)",
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        base_url="https://generativelanguage.googleapis.com/v1beta",
         default_model="gemini-2.5-flash",
         default_vision_model="gemini-2.5-flash",
         aliases=("google", "aistudio", "google-ai-studio", "google_ai_studio"),
-        notes="Get key: https://aistudio.google.com/apikey — uses OpenAI-compatible endpoint",
+        notes="Native google-genai SDK. Key: https://aistudio.google.com/apikey",
     )
 )
 _add(
     ProviderPreset(
         id="anthropic",
         name="Anthropic (Claude)",
-        base_url="https://api.anthropic.com/v1/",
+        base_url="https://api.anthropic.com",
         default_model="claude-sonnet-4-5",
         default_vision_model="claude-sonnet-4-5",
-        default_headers={
-            "anthropic-version": "2023-06-01",
-        },
         aliases=("claude",),
-        notes="Get key: https://console.anthropic.com/ — OpenAI-compatible endpoint",
+        notes="Native anthropic SDK. Key: https://console.anthropic.com/",
     )
 )
 _add(
