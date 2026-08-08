@@ -1,8 +1,8 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
-title MarianaOS — list models
+title MarianaOS - list models
 
 where python >nul 2>&1
 if errorlevel 1 (
@@ -11,7 +11,9 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist ".venv\Scripts\python.exe" (
+set "VENV_PY=%~dp0.venv\Scripts\python.exe"
+
+if not exist "%VENV_PY%" (
   echo Creating .venv and installing dependencies...
   python -m venv .venv
   if errorlevel 1 (
@@ -19,15 +21,17 @@ if not exist ".venv\Scripts\python.exe" (
     pause
     exit /b 1
   )
-  call ".venv\Scripts\activate.bat"
-  ".venv\Scripts\python.exe" -m pip install --upgrade pip
-  ".venv\Scripts\python.exe" -m pip install -r requirements.txt
-) else (
-  call ".venv\Scripts\activate.bat"
+  "%VENV_PY%" -m pip install --upgrade pip
+  "%VENV_PY%" -m pip install -r requirements.txt
+  if errorlevel 1 (
+    echo [ERROR] pip install failed
+    pause
+    exit /b 1
+  )
 )
 
-".venv\Scripts\python.exe" list_models.py %*
-set "EXITCODE=%ERRORLEVEL%"
+"%VENV_PY%" list_models.py %*
+set "EXITCODE=!ERRORLEVEL!"
 echo.
 pause
-endlocal & exit /b %EXITCODE%
+exit /b !EXITCODE!
