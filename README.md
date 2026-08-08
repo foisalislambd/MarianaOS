@@ -33,6 +33,7 @@ pip install -r requirements.txt
 
 | `LLM_PROVIDER` | SDK / API | Notes |
 |----------------|-----------|-------|
+| `opencode` | OpenAI-compatible | **Free** Zen tier (`*-free`, `big-pickle`) — no real key |
 | `gemini` | **Native** `google-genai` | AI Studio — proper tool calling + thought signatures |
 | `anthropic` | **Native** `anthropic` | Claude Messages + tool_use |
 | `openai` | OpenAI SDK | Official Chat Completions |
@@ -40,7 +41,7 @@ pip install -r requirements.txt
 | `groq` / `deepseek` / `mistral` / `xai` / … | OpenAI-compatible | Per each provider's OpenAI-compat docs |
 | `ollama` / `lmstudio` | OpenAI-compatible | Local |
 
-Set `LLM_PROVIDER` + `LLM_API_KEY`. Leave `LLM_MODEL` empty to use defaults.
+Set `LLM_PROVIDER` + `LLM_API_KEY`. For OpenCode free: `LLM_PROVIDER=opencode` and `LLM_API_KEY=opencode`. Leave `LLM_MODEL` empty to use defaults (`deepseek-v4-flash-free`).
 
 ### 4. Configure `.env`
 

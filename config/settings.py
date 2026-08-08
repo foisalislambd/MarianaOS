@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # LLM — set LLM_PROVIDER to auto-fill base URL + default models
     llm_provider: str = Field("openai", alias="LLM_PROVIDER")
-    llm_api_key: str = Field(..., alias="LLM_API_KEY")
+    llm_api_key: str = Field("", alias="LLM_API_KEY")
     # Optional overrides (leave empty to use provider defaults)
     llm_base_url: str = Field("", alias="LLM_BASE_URL")
     llm_model: str = Field("", alias="LLM_MODEL")

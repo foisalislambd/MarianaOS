@@ -25,6 +25,7 @@ OPENAI_COMPAT: Set[str] = {
     "lmstudio",
     "openai_compatible",
     "custom",
+    "opencode",
 }
 
 

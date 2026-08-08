@@ -29,7 +29,13 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
-from config.providers import list_providers, normalize_provider, resolve_llm
+from config.providers import (
+    is_opencode_free_model,
+    list_providers,
+    normalize_provider,
+    provider_allows_empty_key,
+    resolve_llm,
+)
 from core.providers.factory import create_llm_provider
 
 console = Console()
@@ -111,19 +117,35 @@ def print_models(
     table = Table(show_header=True, header_style="bold")
     table.add_column("#", style="dim", width=5, justify="right")
     table.add_column("Model ID", style="cyan")
+    if resolved.provider_id == "opencode":
+        table.add_column("Tier", style="green", width=8)
 
     defaults = {resolved.model, resolved.vision_model}
     for i, m in enumerate(models, 1):
         mid = str(m["id"])
         style = "bold yellow" if mid in defaults else "cyan"
-        table.add_row(str(i), f"[{style}]{mid}[/{style}]")
+        if resolved.provider_id == "opencode":
+            tier = "FREE" if is_opencode_free_model(mid) else "paid"
+            table.add_row(str(i), f"[{style}]{mid}[/{style}]", tier)
+        else:
+            table.add_row(str(i), f"[{style}]{mid}[/{style}]")
 
     console.print(table)
+    if resolved.provider_id == "opencode":
+        console.print(
+            "\n[green]FREE[/] = no API key (ids ending in -free, plus big-pickle). "
+            "Paid models need a real OpenCode key."
+        )
     console.print(
         "\n[bold]Copy into .env:[/]\n"
         f"  LLM_PROVIDER={resolved.provider_id}\n"
         f"  LLM_MODEL=<paste-model-id>\n"
         f"  LLM_VISION_MODEL=<paste-vision-model-id>"
+        + (
+            "\n  LLM_API_KEY=opencode"
+            if resolved.provider_id == "opencode"
+            else ""
+        )
     )
 
 
@@ -147,10 +169,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     api_key = (args.key or _env_key()).strip()
     base_url = (args.base_url or _env_base_url()).strip()
 
-    if not api_key or api_key.startswith("your_"):
+    if (not api_key or api_key.startswith("your_")) and not provider_allows_empty_key(
+        provider
+    ):
         console.print("[red]Missing API key.[/] Set LLM_API_KEY in .env or pass --key")
         show_providers()
         return 1
+    if not api_key:
+        api_key = "opencode"
 
     console.print(f"[dim]Fetching models from[/] [cyan]{provider}[/] …")
     try:

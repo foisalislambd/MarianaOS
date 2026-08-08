@@ -149,6 +149,29 @@ _add(
 )
 _add(
     ProviderPreset(
+        id="opencode",
+        name="OpenCode Zen (free tier)",
+        base_url="https://opencode.ai/zen/v1",
+        default_model="deepseek-v4-flash-free",
+        default_vision_model="deepseek-v4-flash-free",
+        aliases=("opencode_zen", "opencode-zen", "oc", "zen"),
+        default_headers={
+            "User-Agent": "opencode",
+            "x-opencode-client": "cli",
+            "x-opencode-project": "marianaos",
+            "HTTP-Referer": "https://github.com/marianaos-agent",
+            "X-Title": "MarianaOS Agent",
+        },
+        notes=(
+            "Free, no API key needed for *-free models + big-pickle. "
+            "Set LLM_API_KEY=opencode (or leave empty). "
+            "Live catalog: https://opencode.ai/zen/v1/models — free ids end with -free "
+            "(plus big-pickle). Premium models need a real OpenCode key."
+        ),
+    )
+)
+_add(
+    ProviderPreset(
         id="ollama",
         name="Ollama (local)",
         base_url="http://127.0.0.1:11434/v1",
@@ -181,6 +204,10 @@ def normalize_provider(name: str) -> str:
         "grok": "xai",
         "custom": "openai_compatible",
         "compatible": "openai_compatible",
+        "opencode_zen": "opencode",
+        "opencodezen": "opencode",
+        "oc": "opencode",
+        "zen": "opencode",
     }
     key = aliases.get(key, key)
     if key in PROVIDERS:
@@ -216,6 +243,34 @@ class ResolvedLLM:
     notes: str = ""
 
 
+# Models known to work on OpenCode Zen without an API key (rotates upstream).
+# Anything ending in "-free" is also treated as free.
+OPENCODE_FREE_MODELS: tuple[str, ...] = (
+    "big-pickle",
+    "deepseek-v4-flash-free",
+    "mimo-v2.5-free",
+    "nemotron-3-ultra-free",
+    "north-mini-code-free",
+    "longcat-2.0-free",
+    "ling-3.0-flash-free",
+    "ling-3.0-tiny-free",
+    "laguna-s-2.1-free",
+)
+
+
+def is_opencode_free_model(model_id: str) -> bool:
+    mid = (model_id or "").strip()
+    if not mid:
+        return False
+    if mid.endswith("-free"):
+        return True
+    return mid in OPENCODE_FREE_MODELS
+
+
+def provider_allows_empty_key(provider_id: str) -> bool:
+    return provider_id in {"opencode", "ollama", "lmstudio"}
+
+
 def resolve_llm(
     provider: str,
     api_key: str,
@@ -244,11 +299,15 @@ def resolve_llm(
     url = _clean(base_url) or preset.base_url
     mdl = _clean(model) or preset.default_model
     vis = _clean(vision_model) or preset.default_vision_model or mdl
+    key = _clean(api_key)
+    if not key and provider_allows_empty_key(pid):
+        # OpenAI SDK requires a non-empty string; upstream OpenCode free tier ignores it
+        key = "opencode" if pid == "opencode" else pid
 
     return ResolvedLLM(
         provider_id=pid,
         provider_name=pname,
-        api_key=api_key,
+        api_key=key,
         base_url=url,
         model=mdl,
         vision_model=vis,

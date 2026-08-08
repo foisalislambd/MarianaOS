@@ -1,7 +1,7 @@
 """OpenAI Chat Completions compatible providers.
 
 Used for: OpenAI, OpenRouter, Groq, DeepSeek, Mistral, xAI, Together,
-Fireworks, Ollama, LM Studio, and other OpenAI-compatible gateways.
+Fireworks, Ollama, LM Studio, OpenCode Zen, and other OpenAI-compatible gateways.
 
 Docs: https://platform.openai.com/docs/api-reference/chat
 """
@@ -9,8 +9,9 @@ Docs: https://platform.openai.com/docs/api-reference/chat
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
+import httpx
 from openai import AsyncOpenAI
 
 from core.llm_types import LLMTurn, ToolCallRequest
@@ -18,6 +19,43 @@ from core.providers.base import BaseLLMProvider
 from utils.logging import get_logger
 
 log = get_logger("marianaos.llm.openai_compat")
+
+# Placeholder keys that must NOT be sent as Authorization (OpenCode free tier
+# returns 401 "Invalid API key" if Bearer opencode is present).
+_KEYLESS_PLACEHOLDERS: Set[str] = {
+    "",
+    "opencode",
+    "none",
+    "no-key",
+    "nokey",
+    "ollama",
+    "lm-studio",
+    "lmstudio",
+}
+
+
+def _should_strip_auth(api_key: str) -> bool:
+    return (api_key or "").strip().lower() in _KEYLESS_PLACEHOLDERS
+
+
+def _make_http_client(*, strip_auth: bool) -> httpx.AsyncClient:
+    if not strip_auth:
+        return httpx.AsyncClient()
+
+    async def _strip_placeholder_auth(request: httpx.Request) -> None:
+        auth = request.headers.get("Authorization") or request.headers.get("authorization")
+        if not auth:
+            return
+        token = auth.split(" ", 1)[-1].strip().lower()
+        if token in _KEYLESS_PLACEHOLDERS:
+            request.headers.pop("Authorization", None)
+            # httpx may store lower-case too depending on version
+            try:
+                del request.headers["authorization"]
+            except Exception:
+                pass
+
+    return httpx.AsyncClient(event_hooks={"request": [_strip_placeholder_auth]})
 
 
 class OpenAICompatProvider(BaseLLMProvider):
@@ -38,10 +76,14 @@ class OpenAICompatProvider(BaseLLMProvider):
         self.vision_model = vision_model
         self.max_tokens = max_tokens
         self.temperature = temperature
+        key = (api_key or "").strip() or "opencode"
+        strip_auth = provider_id == "opencode" and _should_strip_auth(key)
+        self._http = _make_http_client(strip_auth=strip_auth)
         self.client = AsyncOpenAI(
-            api_key=api_key,
+            api_key=key,
             base_url=base_url,
             default_headers=default_headers or None,
+            http_client=self._http,
         )
 
     async def complete(
@@ -81,6 +123,15 @@ class OpenAICompatProvider(BaseLLMProvider):
             "role": "assistant",
             "content": msg.content,
         }
+
+        # OpenCode / DeepSeek thinking models require reasoning_content echoed back
+        reasoning = getattr(msg, "reasoning_content", None)
+        if reasoning is None:
+            extra = getattr(msg, "model_extra", None) or {}
+            if isinstance(extra, dict):
+                reasoning = extra.get("reasoning_content")
+        if reasoning:
+            assistant["reasoning_content"] = reasoning
 
         if tool_calls_raw:
             serialized = []
@@ -153,7 +204,18 @@ class OpenAICompatProvider(BaseLLMProvider):
 
     async def list_models(self) -> List[str]:
         page = await self.client.models.list()
-        ids = [m.id for m in page if getattr(m, "id", None)]
+        rows = getattr(page, "data", None)
+        if rows is None:
+            # Some SDK versions are iterable; prefer .data when present
+            try:
+                rows = list(page)
+            except Exception:
+                rows = []
+        ids: List[str] = []
+        for m in rows:
+            mid = getattr(m, "id", None)
+            if mid:
+                ids.append(str(mid))
         return sorted(ids, key=str.lower)
 
 

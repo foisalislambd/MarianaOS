@@ -256,9 +256,11 @@ class GeminiProvider(BaseLLMProvider):
 
     async def list_models(self) -> List[str]:
         ids: List[str] = []
-        # aio.models.list() returns AsyncPager — do not await it
-        pager = self._client.aio.models.list()
-        async for m in pager:
+        # google-genai 1.x returned AsyncPager directly; 2.x returns a coroutine.
+        listed = self._client.aio.models.list()
+        if hasattr(listed, "__await__"):
+            listed = await listed  # type: ignore[misc]
+        async for m in listed:
             name = getattr(m, "name", None) or ""
             mid = name.split("/")[-1] if name else ""
             if mid:
