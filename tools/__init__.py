@@ -8,9 +8,14 @@ from config.settings import Settings
 from tools.applications import OpenApplicationTool, OpenFolderInCursorTool, OpenUrlTool
 from tools.base import ToolRegistry
 from tools.cursor_ide import (
+    CursorAddContextTool,
     CursorCommandPaletteTool,
+    CursorImportChatTool,
+    CursorNewChatTool,
     CursorOpenChatTool,
+    CursorOpenHistoryTool,
     CursorSelectModelTool,
+    CursorSetEffortTool,
     CursorTypeInChatTool,
 )
 from tools.filesystem import (
@@ -72,11 +77,16 @@ def build_registry(settings: Settings, llm_client: Any) -> ToolRegistry:
     reg.register(OpenUrlTool())
     reg.register(OpenFolderInCursorTool(ws, cursor))
 
-    # Cursor IDE
+    # Cursor IDE / Agents panel
     reg.register(CursorCommandPaletteTool())
     reg.register(CursorOpenChatTool())
+    reg.register(CursorNewChatTool())
+    reg.register(CursorOpenHistoryTool())
     reg.register(CursorSelectModelTool())
+    reg.register(CursorSetEffortTool())
     reg.register(CursorTypeInChatTool())
+    reg.register(CursorAddContextTool())
+    reg.register(CursorImportChatTool())
 
     # Screen / input
     reg.register(TakeScreenshotTool(shot))

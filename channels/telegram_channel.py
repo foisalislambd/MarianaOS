@@ -111,8 +111,9 @@ class TelegramChannel(BaseChannel):
             "screenshots, mouse/keyboard, model select, and more.\n\n"
             "Examples:\n"
             "• `open D:\\\\Projects\\\\MarianaOS in Cursor`\n"
-            "• `take a screenshot and tell me what is on screen`\n"
-            "• `select the claude-sonnet model in Cursor`\n\n"
+            "• `in Cursor select model Sonnet 5`\n"
+            "• `open Cursor chat history and import the last chat`\n"
+            "• `take a screenshot and tell me what is on screen`\n\n"
             "/help · /reset · /id",
             parse_mode=ParseMode.MARKDOWN,
         )
