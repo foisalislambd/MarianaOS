@@ -78,11 +78,11 @@ async def main() -> None:
         media = result.media_paths[-3:] if result.media_paths else []
         footer = ""
         if result.tool_trace:
-            footer = "\n\ntools: " + ", ".join(result.tool_trace[-8:])
+            footer = "\n\n---\ntools: `" + "`, `".join(result.tool_trace[-8:]) + "`"
         return OutboundMessage(
             text=(result.text + footer).strip(),
             media_paths=media,
-            parse_mode=None,
+            parse_mode="rich",
         )
 
     channel.on_message(handle)

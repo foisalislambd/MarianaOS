@@ -21,7 +21,9 @@ class InboundMessage:
 class OutboundMessage:
     text: str = ""
     media_paths: List[str] = field(default_factory=list)
-    parse_mode: Optional[str] = "Markdown"
+    # "rich" = Telegram Bot API sendRichMessage (GFM markdown) — best for AI replies
+    # "HTML" / "MarkdownV2" / None = legacy sendMessage parse modes
+    parse_mode: Optional[str] = "rich"
 
 
 MessageHandler = Callable[[InboundMessage], Awaitable[OutboundMessage]]

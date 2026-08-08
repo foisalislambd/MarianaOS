@@ -1,4 +1,4 @@
-"""Telegram bot channel."""
+"""Telegram bot channel — uses Bot API Rich Messages for AI replies."""
 
 from __future__ import annotations
 
@@ -17,6 +17,13 @@ from telegram.ext import (
 
 from channels.base import BaseChannel, InboundMessage, OutboundMessage
 from utils.logging import get_logger
+from utils.telegram_format import (
+    HTML_MAX_CHARS,
+    RICH_MAX_CHARS,
+    chunk_text,
+    markdown_to_telegram_html,
+    normalize_llm_markdown,
+)
 
 log = get_logger("marianaos.telegram")
 
@@ -74,16 +81,17 @@ class TelegramChannel(BaseChannel):
             return
         chat_id = int(user_id)
         text = (message.text or "").strip()
+        mode = (message.parse_mode or "rich").strip().lower()
+
         if text:
-            for chunk in _chunk_text(text, 4000):
-                try:
-                    await self.app.bot.send_message(
-                        chat_id=chat_id,
-                        text=chunk,
-                        parse_mode=ParseMode.MARKDOWN if message.parse_mode else None,
-                    )
-                except Exception:
-                    await self.app.bot.send_message(chat_id=chat_id, text=chunk)
+            if mode in {"rich", "markdown", "md"}:
+                await self._send_rich_markdown(chat_id, text)
+            elif mode in {"html"}:
+                await self._send_html(chat_id, text)
+            elif mode in {"markdownv2", "markdown_v2"}:
+                await self._send_plain_with_mode(chat_id, text, ParseMode.MARKDOWN_V2)
+            else:
+                await self._send_plain_with_mode(chat_id, text, None)
 
         for media in message.media_paths:
             path = Path(media)
@@ -94,28 +102,76 @@ class TelegramChannel(BaseChannel):
                 except Exception as e:
                     log.warning("Failed to send photo %s: %s", path, e)
 
+    async def _send_rich_markdown(self, chat_id: int, text: str) -> None:
+        """Bot API 10.1+ Rich Messages — best for AI / LLM Markdown replies."""
+        assert self.app is not None
+        md = normalize_llm_markdown(text)
+        for chunk in chunk_text(md, RICH_MAX_CHARS):
+            try:
+                await self.app.bot._post(  # noqa: SLF001 — PTB has no public sendRichMessage yet
+                    "sendRichMessage",
+                    {
+                        "chat_id": chat_id,
+                        "rich_message": {"markdown": chunk},
+                    },
+                )
+            except Exception as e:
+                log.warning("sendRichMessage failed (%s) — falling back to HTML", e)
+                await self._send_html(chat_id, chunk)
+
+    async def _send_html(self, chat_id: int, text: str) -> None:
+        assert self.app is not None
+        html_text = markdown_to_telegram_html(text)
+        for chunk in chunk_text(html_text, HTML_MAX_CHARS):
+            try:
+                await self.app.bot.send_message(
+                    chat_id=chat_id,
+                    text=chunk,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                log.warning("HTML send failed (%s) — plain text", e)
+                await self.app.bot.send_message(chat_id=chat_id, text=chunk)
+
+    async def _send_plain_with_mode(
+        self, chat_id: int, text: str, parse_mode: Optional[str]
+    ) -> None:
+        assert self.app is not None
+        for chunk in chunk_text(text, HTML_MAX_CHARS):
+            try:
+                await self.app.bot.send_message(
+                    chat_id=chat_id,
+                    text=chunk,
+                    parse_mode=parse_mode,
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                await self.app.bot.send_message(chat_id=chat_id, text=chunk)
+
     async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
         if not user or not update.message:
             return
         if not self._authorized(user.id):
-            await update.message.reply_text(
-                f"⛔ Unauthorized.\nYour Telegram ID: `{user.id}`\n"
-                "Add it to TELEGRAM_ALLOWED_USERS in .env",
-                parse_mode=ParseMode.MARKDOWN,
+            await self._send_rich_markdown(
+                user.id,
+                f"⛔ **Unauthorized**\n\nYour Telegram ID: `{user.id}`\n\n"
+                "Add it to `TELEGRAM_ALLOWED_USERS` in `.env`",
             )
             return
-        await update.message.reply_text(
-            "🖥️ *MarianaOS Agent online*\n\n"
-            "You can control this PC — open Cursor, folders, "
-            "screenshots, mouse/keyboard, model select, and more.\n\n"
-            "Examples:\n"
-            "• `open D:\\\\Projects\\\\MarianaOS in Cursor`\n"
-            "• `in Cursor select model Sonnet 5`\n"
-            "• `open Cursor chat history and import the last chat`\n"
-            "• `take a screenshot and tell me what is on screen`\n\n"
-            "/help · /reset · /id",
-            parse_mode=ParseMode.MARKDOWN,
+        await self._send_rich_markdown(
+            user.id,
+            """# MarianaOS Agent online
+
+You can control this PC — Cursor, folders, screenshots, mouse/keyboard, model select, and more.
+
+## Examples
+- `open D:\\Projects\\MarianaOS in Cursor`
+- `in Cursor select model Sonnet 5`
+- `take a screenshot and tell me what is on screen`
+
+/help · /reset · /id""",
         )
 
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -124,28 +180,29 @@ class TelegramChannel(BaseChannel):
         if not self._authorized(update.effective_user.id):
             await update.message.reply_text("Unauthorized")
             return
-        await update.message.reply_text(
-            "*Commands*\n"
-            "/start — intro\n"
-            "/help — this help\n"
-            "/reset — clear conversation memory\n"
-            "/id — show your Telegram user id\n\n"
-            "*What I can do*\n"
-            "• Open folders/files in Cursor IDE\n"
-            "• Select Cursor AI models\n"
-            "• Take & analyze screenshots\n"
-            "• Click, type, hotkeys\n"
-            "• Files, shell, windows, clipboard\n"
-            "• Send final screenshots back to you",
-            parse_mode=ParseMode.MARKDOWN,
+        await self._send_rich_markdown(
+            update.effective_user.id,
+            """# Commands
+- /start — intro
+- /help — this help
+- /reset — clear conversation memory
+- /id — show your Telegram user id
+
+# What I can do
+- Open folders/files in Cursor IDE
+- Select Cursor AI models (Python / state.vscdb)
+- Take & analyze screenshots
+- Click, type, hotkeys
+- Files, shell, windows, clipboard
+- Send final screenshots back to you""",
         )
 
     async def _cmd_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.message or not update.effective_user:
             return
-        await update.message.reply_text(
+        await self._send_rich_markdown(
+            update.effective_user.id,
             f"Your Telegram ID: `{update.effective_user.id}`",
-            parse_mode=ParseMode.MARKDOWN,
         )
 
     async def _cmd_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -187,7 +244,6 @@ class TelegramChannel(BaseChannel):
         dest = get_settings().screenshot_dir / f"tg_{largest.file_unique_id}.jpg"
         await file.download_to_drive(custom_path=str(dest))
         text = f"{caption}\n\n[User attached image saved at: {dest}]"
-        # Message objects are immutable in PTB — do not assign msg.text
         await self._handle_user_text(update, context, text)
 
     async def _on_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -249,9 +305,3 @@ class TelegramChannel(BaseChannel):
             await msg.reply_text(f"❌ Error: {e}")
         finally:
             self._busy.discard(user.id)
-
-
-def _chunk_text(text: str, size: int) -> List[str]:
-    if not text:
-        return []
-    return [text[i : i + size] for i in range(0, len(text), size)]

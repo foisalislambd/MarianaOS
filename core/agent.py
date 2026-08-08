@@ -38,6 +38,14 @@ SYSTEM_PROMPT = """You are {agent_name}, a powerful desktop AI agent controlling
 7. mouse_click uses absolute primary-monitor pixels.
 8. Workspace default: {workspace}
 9. Never invent tool results.
+
+## Response formatting (Telegram Rich Messages)
+Format final replies with Markdown:
+- `#` / `##` headings for sections
+- **bold** for key results, `inline code` for paths/commands
+- fenced ```language``` code blocks when showing code
+- `-` bullet lists for steps/results
+Keep it mobile-readable; avoid huge tables.
 """
 
 
