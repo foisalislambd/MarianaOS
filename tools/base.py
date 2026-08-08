@@ -208,6 +208,20 @@ class ToolRegistry:
             self._session_enabled.add(name)
 
         args = dict(arguments or {})
+
+        # Coerce LLM quirks: "false" string, 1.0 floats, etc.
+        for key, value in list(args.items()):
+            if isinstance(value, float) and value.is_integer():
+                args[key] = int(value)
+            elif isinstance(value, str):
+                low = value.strip().lower()
+                if low in {"true", "false", "yes", "no", "1", "0"}:
+                    param = next((p for p in tool.parameters if p.name == key), None)
+                    if param and param.type == "boolean":
+                        args[key] = low in {"true", "yes", "1"}
+                    elif key == "confirm":
+                        args[key] = low in {"true", "yes", "1"}
+
         confirmed = bool(args.pop("confirm", False))
 
         if tool.destructive and require_confirmation and not confirmed:
@@ -219,11 +233,6 @@ class ToolRegistry:
                     "plus confirm=true."
                 ),
             )
-
-        # Coerce common JSON number quirks (LLM may send 1.0 for integers)
-        for key, value in list(args.items()):
-            if isinstance(value, float) and value.is_integer():
-                args[key] = int(value)
 
         try:
             return await tool.execute(**args)

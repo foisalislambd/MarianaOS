@@ -120,6 +120,14 @@ def get_composer_model(db: Optional[Path] = None) -> ComposerModelState:
         con.close()
 
 
+def _version_sort_key(text: str) -> Tuple[int, ...]:
+    """Sort key so newer versions sort last (use with reverse) / or negate via pad."""
+    parts = [int(x) for x in re.findall(r"\d+", text or "")]
+    # Pad then invert for descending compare without negating the tuple
+    padded = (parts + [0, 0, 0, 0])[:4]
+    return tuple(-p for p in padded)
+
+
 def resolve_model(query: str, models: Optional[List[Dict[str, Any]]] = None) -> ModelMatch:
     models = models if models is not None else list_available_models()
     q = (query or "").strip()
@@ -147,8 +155,16 @@ def resolve_model(query: str, models: Optional[List[Dict[str, Any]]] = None) -> 
             tokens = [t for t in re.split(r"[^a-z0-9]+", q.lower()) if t]
             if tokens and all(_normalize(t) in _normalize(name + display) for t in tokens):
                 score = 500 + len(tokens) * 10
+
+        # "sonnet" should match alias "sonnet-latest" on the newest family member
+        if any(_normalize(a) == f"{qn}latest" for a in aliases):
+            score = max(score, 1030)
+        elif score and any("latest" in a.lower() for a in aliases) and any(
+            n == qn for n in norms
+        ):
+            score = max(score, 1030)
+
         if score:
-            # Prefer newer / exact display matches slightly
             if _normalize(display) == qn:
                 score += 50
             scored.append((score, m))
@@ -162,7 +178,15 @@ def resolve_model(query: str, models: Optional[List[Dict[str, Any]]] = None) -> 
             f"No Cursor model matched '{query}'. Examples: " + ", ".join(names)
         )
 
-    scored.sort(key=lambda x: (-x[0], str(x[1].get("name") or "")))
+    # Tie-break: higher score, then newer version in id/display (not A-Z which picks Sonnet 4)
+    scored.sort(
+        key=lambda x: (
+            -x[0],
+            _version_sort_key(str(x[1].get("name") or "")),
+            _version_sort_key(str(x[1].get("clientDisplayName") or "")),
+            str(x[1].get("name") or ""),
+        )
+    )
     best_score, best = scored[0]
     param_ids = [str(p.get("id")) for p in (best.get("parameterDefinitions") or []) if p.get("id")]
     return ModelMatch(
@@ -177,7 +201,7 @@ def _build_composer_config(
     model: ModelMatch,
     *,
     effort: Optional[str] = None,
-    max_mode: bool = False,
+    max_mode: Optional[bool] = None,
     previous: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     prev = previous or {}
@@ -191,7 +215,7 @@ def _build_composer_config(
                 prev_params[str(p["id"])] = str(p["value"])
 
     if effort:
-        effort_val = effort.lower()
+        effort_val = str(effort).strip().lower()
     else:
         effort_val = prev_params.get("effort", "medium")
 
@@ -200,9 +224,11 @@ def _build_composer_config(
     if "fast" in model.parameter_ids:
         params.append({"id": "fast", "value": prev_params.get("fast", "false")})
 
+    use_max = bool(prev.get("maxMode", False)) if max_mode is None else bool(max_mode)
+
     return {
         "modelName": model.model_id,
-        "maxMode": bool(max_mode if max_mode is not None else prev.get("maxMode", False)),
+        "maxMode": use_max,
         "selectedModels": [
             {
                 "modelId": model.model_id,
@@ -210,6 +236,30 @@ def _build_composer_config(
             }
         ],
     }
+
+
+def _backup_db(path: Path, keep: int = 3) -> Optional[Path]:
+    """Copy state DB once, keep only the newest `keep` MarianaOS backups."""
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    bak = path.with_name(f"state.vscdb.marianaos-bak-{stamp}")
+    try:
+        shutil.copy2(path, bak)
+    except Exception:
+        return None
+    try:
+        existing = sorted(
+            path.parent.glob("state.vscdb.marianaos-bak-*"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for old in existing[keep:]:
+            try:
+                old.unlink()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return bak
 
 
 def set_composer_model(
@@ -225,15 +275,7 @@ def set_composer_model(
     if not path.exists():
         raise FileNotFoundError(f"Cursor state DB not found: {path}")
 
-    if backup:
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        bak = path.with_name(f"state.vscdb.marianaos-bak-{stamp}")
-        try:
-            shutil.copy2(path, bak)
-        except Exception:
-            bak = None
-    else:
-        bak = None
+    bak = _backup_db(path) if backup else None
 
     con = _connect(path, readonly=False)
     try:
@@ -246,7 +288,7 @@ def set_composer_model(
         new_cfg = _build_composer_config(
             match,
             effort=effort,
-            max_mode=bool(previous.get("maxMode")) if max_mode is None else max_mode,
+            max_mode=max_mode,
             previous=previous,
         )
         cfg["composer"] = new_cfg
@@ -278,11 +320,7 @@ def set_composer_effort(
 
     path = db or cursor_state_db_path()
     if backup:
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        try:
-            shutil.copy2(path, path.with_name(f"state.vscdb.marianaos-bak-{stamp}"))
-        except Exception:
-            pass
+        _backup_db(path)
 
     con = _connect(path, readonly=False)
     try:
@@ -427,34 +465,32 @@ def open_chat_session(composer_id: str) -> Dict[str, Any]:
     if not cid:
         raise ValueError("composer_id is required")
 
-    chats = list_chats(cid, limit=5, include_archived=True)
-    match = next((c for c in chats if c.get("composer_id") == cid), None)
-    if not match:
-        # fallback: scan headers without query filter for exact id
-        all_hits = list_chats(None, limit=100, include_archived=True)
-        # list_chats without query skips subagents and limits — do direct lookup
-        path = cursor_state_db_path()
-        con = _connect(path, readonly=True)
-        try:
-            row = con.execute(
-                "SELECT value FROM ItemTable WHERE key = ?",
-                ("composer.composerHeaders",),
-            ).fetchone()
-            raw = row[0] if isinstance(row[0], str) else row[0].decode("utf-8", "replace")
-            composers = json.loads(raw).get("allComposers") or []
-        finally:
-            con.close()
-        for c in composers:
-            if isinstance(c, dict) and str(c.get("composerId")) == cid:
-                ws = c.get("workspaceIdentifier") or {}
-                uri = (ws.get("uri") or {}) if isinstance(ws, dict) else {}
-                match = {
-                    "composer_id": cid,
-                    "name": c.get("name"),
-                    "workspace_id": (ws.get("id") if isinstance(ws, dict) else ""),
-                    "workspace_path": uri.get("fsPath") if isinstance(uri, dict) else "",
-                }
-                break
+    path = cursor_state_db_path()
+    con = _connect(path, readonly=True)
+    try:
+        row = con.execute(
+            "SELECT value FROM ItemTable WHERE key = ?",
+            ("composer.composerHeaders",),
+        ).fetchone()
+        if not row:
+            raise ValueError("No composer.composerHeaders in Cursor DB")
+        raw = row[0] if isinstance(row[0], str) else row[0].decode("utf-8", "replace")
+        composers = json.loads(raw).get("allComposers") or []
+    finally:
+        con.close()
+
+    match: Optional[Dict[str, Any]] = None
+    for c in composers:
+        if isinstance(c, dict) and str(c.get("composerId")) == cid:
+            ws = c.get("workspaceIdentifier") or {}
+            uri = (ws.get("uri") or {}) if isinstance(ws, dict) else {}
+            match = {
+                "composer_id": cid,
+                "name": c.get("name"),
+                "workspace_id": (ws.get("id") if isinstance(ws, dict) else ""),
+                "workspace_path": uri.get("fsPath") if isinstance(uri, dict) else "",
+            }
+            break
     if not match:
         raise ValueError(f"Chat not found: {cid}")
 
