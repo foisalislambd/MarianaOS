@@ -35,6 +35,7 @@ from config.providers import (
     normalize_provider,
     provider_allows_empty_key,
     resolve_llm,
+    OPENCODE_VISION_MODELS,
 )
 from core.providers.factory import create_llm_provider
 
@@ -119,14 +120,17 @@ def print_models(
     table.add_column("Model ID", style="cyan")
     if resolved.provider_id == "opencode":
         table.add_column("Tier", style="green", width=8)
+        table.add_column("Vision", style="magenta", width=8)
 
     defaults = {resolved.model, resolved.vision_model}
+    vision_set = set(OPENCODE_VISION_MODELS)
     for i, m in enumerate(models, 1):
         mid = str(m["id"])
         style = "bold yellow" if mid in defaults else "cyan"
         if resolved.provider_id == "opencode":
             tier = "FREE" if is_opencode_free_model(mid) else "paid"
-            table.add_row(str(i), f"[{style}]{mid}[/{style}]", tier)
+            vision = "yes" if mid in vision_set else "-"
+            table.add_row(str(i), f"[{style}]{mid}[/{style}]", tier, vision)
         else:
             table.add_row(str(i), f"[{style}]{mid}[/{style}]")
 
@@ -134,7 +138,8 @@ def print_models(
     if resolved.provider_id == "opencode":
         console.print(
             "\n[green]FREE[/] = no API key (ids ending in -free, plus big-pickle). "
-            "Paid models need a real OpenCode key."
+            "[magenta]Vision=yes[/] = screenshot-capable free models "
+            f"({', '.join(OPENCODE_VISION_MODELS)})."
         )
     console.print(
         "\n[bold]Copy into .env:[/]\n"

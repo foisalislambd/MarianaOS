@@ -153,7 +153,7 @@ _add(
         name="OpenCode Zen (free tier)",
         base_url="https://opencode.ai/zen/v1",
         default_model="deepseek-v4-flash-free",
-        default_vision_model="deepseek-v4-flash-free",
+        default_vision_model="mimo-v2.5-free",
         aliases=("opencode_zen", "opencode-zen", "oc", "zen"),
         default_headers={
             "User-Agent": "opencode",
@@ -165,8 +165,9 @@ _add(
         notes=(
             "Free, no API key needed for *-free models + big-pickle. "
             "Set LLM_API_KEY=opencode (or leave empty). "
-            "Live catalog: https://opencode.ai/zen/v1/models — free ids end with -free "
-            "(plus big-pickle). Premium models need a real OpenCode key."
+            "Chat default: deepseek-v4-flash-free. Vision: mimo-v2.5-free "
+            "(also longcat-2.0-free). deepseek-v4-flash-free is text-only. "
+            "Live catalog: https://opencode.ai/zen/v1/models"
         ),
     )
 )
@@ -255,6 +256,12 @@ OPENCODE_FREE_MODELS: tuple[str, ...] = (
     "ling-3.0-flash-free",
     "ling-3.0-tiny-free",
     "laguna-s-2.1-free",
+)
+
+# Free OpenCode models verified to accept image_url / screenshot analysis.
+OPENCODE_VISION_MODELS: tuple[str, ...] = (
+    "mimo-v2.5-free",
+    "longcat-2.0-free",
 )
 
 
