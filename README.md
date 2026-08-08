@@ -86,6 +86,17 @@ notepad .env
 python main.py
 ```
 
+### List models (model ID দেখতে)
+
+```powershell
+python list_models.py --list
+python list_models.py gemini
+python list_models.py openrouter --filter claude
+python list_models.py openai --key sk-...
+```
+
+অথবা `list_models.bat` — দেখানো **Model ID** `.env`-এ `LLM_MODEL=` এ বসাও।
+
 Telegram-এ bot-এ message পাঠাও:
 
 - `open C:\Users\ifois\Desktop\Windsurf\mros in Cursor`
