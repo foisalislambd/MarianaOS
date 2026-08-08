@@ -8,8 +8,9 @@ The architecture is ready for future Web and WhatsApp channels.
 
 - **Telegram control** — chat to control your PC (allowlist security)
 - **30+ tools** — files, apps, Cursor IDE, windows, shell, clipboard, input
+- **Tool discovery** — `search_tools` unlocks tools on demand (`TOOL_DISCOVERY=true`) to save tokens
 - **Screenshots + Vision** — sees the screen, acts, then sends screenshots back to you
-- **Cursor IDE** — open folders, chat/composer, model select, command palette
+- **Cursor IDE (Python-first)** — model/effort/chat list via `state.vscdb`; UI only when needed
 - **Extensible channels** — stubs in `channels/whatsapp_channel.py`, `channels/web_channel.py`
 
 ## Quick start

@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     cursor_path: str = Field("", alias="CURSOR_PATH")
     require_confirmation: bool = Field(False, alias="REQUIRE_CONFIRMATION")
 
+    # Tool discovery — only send core tool schemas to the LLM (saves tokens).
+    # Agent must call search_tools(query) to unlock more tools for that run.
+    tool_discovery: bool = Field(True, alias="TOOL_DISCOVERY")
+    # Comma-separated core tool names (empty = built-in default set)
+    tool_core: str = Field("", alias="TOOL_CORE")
+
     # Logging
     log_level: str = Field("INFO", alias="LOG_LEVEL")
 

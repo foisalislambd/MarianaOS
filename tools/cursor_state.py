@@ -318,3 +318,184 @@ def set_composer_effort(
         }
     finally:
         con.close()
+
+
+def workspace_storage_dir() -> Path:
+    return Path.home() / "AppData" / "Roaming" / "Cursor" / "User" / "workspaceStorage"
+
+
+def list_models_brief() -> List[Dict[str, str]]:
+    """Short list of models for the agent (id + display name)."""
+    out: List[Dict[str, str]] = []
+    for m in list_available_models():
+        out.append(
+            {
+                "id": str(m.get("name") or ""),
+                "name": str(m.get("clientDisplayName") or m.get("name") or ""),
+                "short": str(m.get("inputboxShortModelName") or ""),
+            }
+        )
+    return out
+
+
+def list_chats(
+    query: Optional[str] = None,
+    *,
+    limit: int = 30,
+    include_archived: bool = False,
+) -> List[Dict[str, Any]]:
+    """List recent Cursor Agent/Composer chats from composer.composerHeaders."""
+    path = cursor_state_db_path()
+    con = _connect(path, readonly=True)
+    try:
+        row = con.execute(
+            "SELECT value FROM ItemTable WHERE key = ?",
+            ("composer.composerHeaders",),
+        ).fetchone()
+        if not row:
+            return []
+        raw = row[0] if isinstance(row[0], str) else row[0].decode("utf-8", "replace")
+        data = json.loads(raw)
+        composers = list(data.get("allComposers") or [])
+    finally:
+        con.close()
+
+    qn = _normalize(query or "")
+    scored: List[Tuple[int, Dict[str, Any]]] = []
+    for c in composers:
+        if not isinstance(c, dict):
+            continue
+        if c.get("isDraft"):
+            continue
+        if not include_archived and c.get("isArchived"):
+            continue
+        # Skip spawned explore subagents unless searched specifically
+        if c.get("subagentInfo") and not qn:
+            continue
+        name = str(c.get("name") or "")
+        subtitle = str(c.get("subtitle") or "")
+        cid = str(c.get("composerId") or "")
+        ws = c.get("workspaceIdentifier") or {}
+        ws_id = str(ws.get("id") or "") if isinstance(ws, dict) else ""
+        ws_path = ""
+        if isinstance(ws, dict):
+            uri = ws.get("uri") or {}
+            if isinstance(uri, dict):
+                ws_path = str(uri.get("fsPath") or "")
+        hay = f"{name} {subtitle} {cid}"
+        score = 1
+        if qn:
+            hn = _normalize(hay)
+            if qn == _normalize(name):
+                score = 1000
+            elif qn in hn:
+                score = 500 + hn.count(qn)
+            else:
+                tokens = [t for t in re.split(r"[^a-z0-9]+", (query or "").lower()) if t]
+                if tokens and all(_normalize(t) in hn for t in tokens):
+                    score = 200
+                else:
+                    continue
+        updated = int(c.get("conversationCheckpointLastUpdatedAt") or c.get("createdAt") or 0)
+        scored.append(
+            (
+                score,
+                {
+                    "composer_id": cid,
+                    "name": name,
+                    "subtitle": subtitle[:160],
+                    "mode": c.get("unifiedMode"),
+                    "updated_at": updated,
+                    "workspace_id": ws_id,
+                    "workspace_path": ws_path,
+                    "is_archived": bool(c.get("isArchived")),
+                },
+            )
+        )
+
+    # Sort by match score then recency
+    scored.sort(key=lambda x: (-x[0], -int(x[1].get("updated_at") or 0)))
+    return [item for _, item in scored[: max(1, min(limit, 100))]]
+
+
+def open_chat_session(composer_id: str) -> Dict[str, Any]:
+    """
+    Focus a past chat by writing selectedComposerIds in that chat's workspace DB.
+    Cursor usually needs a window reload to show it.
+    """
+    cid = (composer_id or "").strip()
+    if not cid:
+        raise ValueError("composer_id is required")
+
+    chats = list_chats(cid, limit=5, include_archived=True)
+    match = next((c for c in chats if c.get("composer_id") == cid), None)
+    if not match:
+        # fallback: scan headers without query filter for exact id
+        all_hits = list_chats(None, limit=100, include_archived=True)
+        # list_chats without query skips subagents and limits — do direct lookup
+        path = cursor_state_db_path()
+        con = _connect(path, readonly=True)
+        try:
+            row = con.execute(
+                "SELECT value FROM ItemTable WHERE key = ?",
+                ("composer.composerHeaders",),
+            ).fetchone()
+            raw = row[0] if isinstance(row[0], str) else row[0].decode("utf-8", "replace")
+            composers = json.loads(raw).get("allComposers") or []
+        finally:
+            con.close()
+        for c in composers:
+            if isinstance(c, dict) and str(c.get("composerId")) == cid:
+                ws = c.get("workspaceIdentifier") or {}
+                uri = (ws.get("uri") or {}) if isinstance(ws, dict) else {}
+                match = {
+                    "composer_id": cid,
+                    "name": c.get("name"),
+                    "workspace_id": (ws.get("id") if isinstance(ws, dict) else ""),
+                    "workspace_path": uri.get("fsPath") if isinstance(uri, dict) else "",
+                }
+                break
+    if not match:
+        raise ValueError(f"Chat not found: {cid}")
+
+    ws_id = str(match.get("workspace_id") or "")
+    if not ws_id:
+        raise RuntimeError("Chat has no workspace_id; cannot open via DB")
+
+    ws_db = workspace_storage_dir() / ws_id / "state.vscdb"
+    if not ws_db.exists():
+        raise FileNotFoundError(f"Workspace DB missing: {ws_db}")
+
+    con = _connect(ws_db, readonly=False)
+    try:
+        row = con.execute(
+            "SELECT value FROM ItemTable WHERE key = ?",
+            ("composer.composerData",),
+        ).fetchone()
+        if row and row[0]:
+            raw = row[0] if isinstance(row[0], str) else row[0].decode("utf-8", "replace")
+            data = json.loads(raw)
+        else:
+            data = {}
+        data["selectedComposerIds"] = [cid]
+        focused = list(data.get("lastFocusedComposerIds") or [])
+        data["lastFocusedComposerIds"] = [cid] + [x for x in focused if x != cid][:9]
+        data["hasMigratedComposerData"] = True
+        data["hasMigratedMultipleComposers"] = True
+        payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        con.execute(
+            "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)",
+            ("composer.composerData", payload),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    return {
+        "ok": True,
+        "composer_id": cid,
+        "name": match.get("name"),
+        "workspace_id": ws_id,
+        "workspace_path": match.get("workspace_path"),
+        "workspace_db": str(ws_db),
+    }

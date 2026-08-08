@@ -1,11 +1,12 @@
-"""Cursor IDE / Agents panel automation helpers.
+"""Cursor IDE tools — prefer Python/state.vscdb; UI only when necessary.
 
-UI map (Agents Window on the right):
-- Bottom bar: mode button (Agent) + settings chip (shows Effort e.g. Medium / model name)
-- Settings menu: Effort (Low/Medium/High), Fast toggle, Model submenu
-- Model list: Auto, Cursor Grok 4.5, Composer 2.5, Opus 5, Sonnet 5, Gemini, …
-- Top: New Agent (+), history (clock), more (…)
-- Input: type prompt; @ = context; / = skills; paperclip = attach
+Python (no clicking):
+  cursor_get_model, cursor_list_models, cursor_select_model, cursor_set_effort,
+  cursor_list_chats, cursor_open_chat_session
+
+UI (hotkeys / paste) — only for live interaction:
+  cursor_open_chat, cursor_new_chat, cursor_type_in_chat, cursor_add_context,
+  cursor_command_palette
 """
 
 from __future__ import annotations
@@ -23,13 +24,7 @@ def _pg():
     return pyautogui
 
 
-async def _focus_cursor() -> Optional[str]:
-    win = await _cursor_window()
-    return win.title if win else None
-
-
 async def _cursor_window():
-    """Focus Cursor and return the pygetwindow Window object."""
     import pygetwindow as gw
 
     matches = [
@@ -57,62 +52,9 @@ async def _cursor_window():
     return win
 
 
-async def _open_agents_panel() -> None:
-    """Bring up the right-side Agents / Chat panel (not command palette)."""
-    pg = _pg()
-    pg.hotkey("ctrl", "l")
-    await asyncio.sleep(0.55)
-
-
-def _agents_bottom_bar_points(win) -> dict:
-    """
-    Approximate click points inside Cursor's right Agents panel bottom bar.
-
-    Layout (from Cursor Agents UI):
-      [ Agent ]  [ Medium / model chip ]
-    The Agents panel sits on the right ~28-40% of the window.
-    """
-    left, top, w, h = win.left, win.top, win.width, win.height
-    # Right panel horizontal band
-    panel_left = left + int(w * 0.62)
-    panel_right = left + w - 16
-    panel_mid_x = (panel_left + panel_right) // 2
-    # Bottom bar just above the window edge / status
-    bar_y = top + int(h * 0.935)
-    return {
-        "agent_mode": (panel_left + 70, bar_y),
-        # Settings chip that opens Effort + Model menu (shows "Medium" etc.)
-        "settings_chip": (panel_mid_x + 40, bar_y),
-        # Slightly right — often closer to the model name on the chip
-        "settings_chip_alt": (min(panel_right - 80, panel_mid_x + 120), bar_y),
-        # After menu opens: Model row is below Effort / Fast in the popup
-        "model_row": (panel_mid_x + 40, bar_y - 95),
-        "effort_low": (panel_mid_x + 20, bar_y - 160),
-        "effort_medium": (panel_mid_x + 20, bar_y - 135),
-        "effort_high": (panel_mid_x + 20, bar_y - 110),
-        "search_box": (panel_mid_x + 160, bar_y - 200),
-    }
-
-
-async def _click_xy(x: int, y: int, clicks: int = 1) -> None:
-    pg = _pg()
-    pg.click(x=int(x), y=int(y), clicks=clicks)
-    await asyncio.sleep(0.35)
-
-
-async def _open_model_picker(win) -> dict:
-    """
-    Open the Agents bottom settings menu, then the Model submenu.
-    Does NOT use the command palette — models are only in this UI.
-    """
-    pts = _agents_bottom_bar_points(win)
-    # 1) Click settings chip (Medium / current model)
-    await _click_xy(*pts["settings_chip"])
-    await asyncio.sleep(0.25)
-    # 2) Click Model row to open the model list + search
-    await _click_xy(*pts["model_row"])
-    await asyncio.sleep(0.4)
-    return pts
+async def _focus_cursor() -> Optional[str]:
+    win = await _cursor_window()
+    return win.title if win else None
 
 
 async def _paste(text: str) -> None:
@@ -138,18 +80,315 @@ async def _palette(command: str, submit: bool = True) -> None:
         await asyncio.sleep(0.4)
 
 
+async def _reload_cursor() -> str:
+    title = await _focus_cursor()
+    if not title:
+        return "Cursor window not found — open/reload Cursor manually to apply DB changes."
+    try:
+        await _palette("Developer: Reload Window", submit=True)
+        await asyncio.sleep(1.0)
+        return "Triggered Developer: Reload Window."
+    except Exception as e:
+        return f"Reload failed ({e}). Restart Cursor manually."
+
+
+# ----- Python / DB tools -----
+
+
+class CursorGetModelTool(BaseTool):
+    name = "cursor_get_model"
+    category = "cursor"
+    always_on = True
+    description = (
+        "Read the current Cursor Agents/Composer model + effort from state.vscdb (Python)."
+    )
+    parameters = []
+
+    async def execute(self, **_: Any) -> ToolResult:
+        from tools.cursor_state import get_composer_model
+
+        try:
+            cur = get_composer_model()
+        except Exception as e:
+            return ToolResult(success=False, output=str(e))
+        return ToolResult(
+            success=True,
+            output=f"Current model: {cur.display_name} ({cur.model_id}), effort={cur.effort}",
+            data={
+                "model_id": cur.model_id,
+                "display_name": cur.display_name,
+                "effort": cur.effort,
+                "max_mode": cur.max_mode,
+            },
+        )
+
+
+class CursorListModelsTool(BaseTool):
+    name = "cursor_list_models"
+    category = "cursor"
+    always_on = True
+    description = (
+        "List Cursor models available in the Agents picker (from state.vscdb, Python). "
+        "Use before cursor_select_model if unsure of the exact name."
+    )
+    parameters = [
+        ToolParam(
+            name="filter",
+            type="string",
+            description="Optional filter, e.g. 'sonnet' or 'gpt'.",
+            required=False,
+        ),
+    ]
+
+    async def execute(self, filter: Optional[str] = None, **_: Any) -> ToolResult:
+        from tools.cursor_state import list_models_brief, resolve_model
+
+        models = list_models_brief()
+        q = (filter or "").strip().lower()
+        if q:
+            models = [
+                m
+                for m in models
+                if q in m["id"].lower()
+                or q in m["name"].lower()
+                or q in m.get("short", "").lower()
+            ]
+        lines = [f"{m['name']}  [{m['id']}]" for m in models]
+        hint = ""
+        if filter and not models:
+            try:
+                match = resolve_model(filter)
+                hint = f"\nClosest resolve: {match.display_name} ({match.model_id})"
+            except Exception as e:
+                hint = f"\nNo matches ({e})"
+        return ToolResult(
+            success=True,
+            output=("\n".join(lines) if lines else "No models.") + hint,
+            data={"models": models, "count": len(models)},
+        )
+
+
+class CursorSelectModelTool(BaseTool):
+    name = "cursor_select_model"
+    category = "cursor"
+    always_on = True
+    description = (
+        "Set Cursor Agents/Composer model via Python (writes state.vscdb). "
+        "No UI clicking. Examples: 'Sonnet 5', 'Grok', 'Composer 2.5', 'Opus 5', 'Auto'."
+    )
+    parameters = [
+        ToolParam(
+            name="model",
+            type="string",
+            description="Model search text, e.g. 'Sonnet 5' or 'Grok'.",
+        ),
+        ToolParam(
+            name="effort",
+            type="string",
+            description="Optional effort: Low, Medium, High.",
+            required=False,
+            enum=["Low", "Medium", "High"],
+        ),
+        ToolParam(
+            name="reload",
+            type="boolean",
+            description="Reload Cursor so UI updates (default true).",
+            required=False,
+        ),
+    ]
+
+    async def execute(
+        self,
+        model: str,
+        effort: Optional[str] = None,
+        reload: bool = True,
+        **_: Any,
+    ) -> ToolResult:
+        from tools.cursor_state import get_composer_model, set_composer_model
+
+        try:
+            result = set_composer_model(model, effort=effort)
+        except Exception as e:
+            return ToolResult(success=False, output=f"Failed to set model via DB: {e}")
+
+        reload_note = "Reload skipped."
+        if reload:
+            reload_note = await _reload_cursor()
+
+        try:
+            current = get_composer_model()
+            verify = (
+                f"DB now: {current.display_name} ({current.model_id}), "
+                f"effort={current.effort}."
+            )
+        except Exception:
+            verify = "Could not re-read DB."
+
+        return ToolResult(
+            success=True,
+            output=(
+                f"Set model '{result['display_name']}' ({result['model_id']}) "
+                f"from '{model}'. {verify} {reload_note}"
+            ),
+            data=result,
+        )
+
+
+class CursorSetEffortTool(BaseTool):
+    name = "cursor_set_effort"
+    category = "cursor"
+    description = (
+        "Set Cursor Agent effort (Low/Medium/High) via Python state.vscdb."
+    )
+    parameters = [
+        ToolParam(
+            name="effort",
+            type="string",
+            description="Effort level.",
+            enum=["Low", "Medium", "High"],
+        ),
+        ToolParam(
+            name="reload",
+            type="boolean",
+            description="Reload Cursor after writing (default true).",
+            required=False,
+        ),
+    ]
+
+    async def execute(self, effort: str, reload: bool = True, **_: Any) -> ToolResult:
+        from tools.cursor_state import set_composer_effort
+
+        try:
+            result = set_composer_effort(effort)
+        except Exception as e:
+            return ToolResult(success=False, output=f"Failed to set effort: {e}")
+
+        reload_note = "Reload skipped."
+        if reload:
+            reload_note = await _reload_cursor()
+
+        return ToolResult(
+            success=True,
+            output=(
+                f"Set effort '{result['effort']}' for {result['model_id']}. {reload_note}"
+            ),
+            data=result,
+        )
+
+
+class CursorListChatsTool(BaseTool):
+    name = "cursor_list_chats"
+    category = "cursor"
+    always_on = True
+    description = (
+        "List recent Cursor Agent/Composer chats via Python (composer.composerHeaders). "
+        "Returns composer_id — use cursor_open_chat_session to open one."
+    )
+    parameters = [
+        ToolParam(
+            name="filter",
+            type="string",
+            description="Optional title/subtitle keywords.",
+            required=False,
+        ),
+        ToolParam(
+            name="limit",
+            type="integer",
+            description="Max chats (default 20).",
+            required=False,
+        ),
+    ]
+
+    async def execute(
+        self,
+        filter: Optional[str] = None,
+        limit: int = 20,
+        **_: Any,
+    ) -> ToolResult:
+        from tools.cursor_state import list_chats
+
+        try:
+            chats = list_chats(filter, limit=int(limit or 20))
+        except Exception as e:
+            return ToolResult(success=False, output=str(e))
+
+        lines = []
+        for c in chats:
+            lines.append(
+                f"- {c['name']} | id={c['composer_id']} | "
+                f"{c.get('workspace_path') or c.get('workspace_id')}"
+            )
+        return ToolResult(
+            success=True,
+            output="\n".join(lines) if lines else "No chats found.",
+            data={"chats": chats, "count": len(chats)},
+        )
+
+
+class CursorOpenChatSessionTool(BaseTool):
+    name = "cursor_open_chat_session"
+    category = "cursor"
+    always_on = True
+    description = (
+        "Open a past Cursor chat by composer_id (Python writes workspace state.vscdb). "
+        "Get ids from cursor_list_chats. Reloads Cursor by default."
+    )
+    parameters = [
+        ToolParam(
+            name="composer_id",
+            type="string",
+            description="Chat id from cursor_list_chats.",
+        ),
+        ToolParam(
+            name="reload",
+            type="boolean",
+            description="Reload Cursor after writing (default true).",
+            required=False,
+        ),
+    ]
+
+    async def execute(
+        self,
+        composer_id: str,
+        reload: bool = True,
+        **_: Any,
+    ) -> ToolResult:
+        from tools.cursor_state import open_chat_session
+
+        try:
+            result = open_chat_session(composer_id)
+        except Exception as e:
+            return ToolResult(success=False, output=f"Failed to open chat: {e}")
+
+        reload_note = "Reload skipped."
+        if reload:
+            reload_note = await _reload_cursor()
+
+        return ToolResult(
+            success=True,
+            output=(
+                f"Opened chat '{result.get('name')}' ({result['composer_id']}) "
+                f"in workspace {result.get('workspace_path')}. {reload_note}"
+            ),
+            data=result,
+        )
+
+
+# ----- UI tools (fallback / live interaction) -----
+
+
 class CursorCommandPaletteTool(BaseTool):
     name = "cursor_command_palette"
+    category = "cursor"
     description = (
-        "Open Cursor command palette (Ctrl+Shift+P), optionally type a command and Enter. "
-        "Useful commands: 'View: Toggle Primary Side Bar', 'Chat: New Chat', "
-        "'Cursor: Open Chat', settings, etc."
+        "UI: Open Cursor command palette (Ctrl+Shift+P) and optionally run a command. "
+        "Do NOT use for model select — use cursor_select_model instead."
     )
     parameters = [
         ToolParam(
             name="command",
             type="string",
-            description="Command text to run in the palette.",
+            description="Command text to run.",
             required=False,
         ),
         ToolParam(
@@ -181,10 +420,10 @@ class CursorCommandPaletteTool(BaseTool):
 
 class CursorOpenChatTool(BaseTool):
     name = "cursor_open_chat"
+    category = "cursor"
     description = (
-        "Open Cursor Agents / Chat panel on the right. "
-        "mode=agent opens Agent panel (preferred for model select / chat). "
-        "mode=chat uses Ctrl+L; mode=composer uses Ctrl+I."
+        "UI: Focus Cursor Agents/Chat panel (Ctrl+L). "
+        "For opening a past chat by id, prefer cursor_open_chat_session."
     )
     parameters = [
         ToolParam(
@@ -206,195 +445,43 @@ class CursorOpenChatTool(BaseTool):
         if mode == "composer":
             pg.hotkey("ctrl", "i")
         else:
-            # Agents / Chat panel on the right (Ctrl+L). No command palette.
             pg.hotkey("ctrl", "l")
         await asyncio.sleep(0.45)
         return ToolResult(
             success=True,
-            output=f"Opened Cursor {mode} panel on '{title}'. Take a screenshot to confirm.",
+            output=f"Focused Cursor {mode} panel on '{title}'.",
             data={"window": title, "mode": mode},
         )
 
 
 class CursorNewChatTool(BaseTool):
     name = "cursor_new_chat"
-    description = (
-        "Start a new Agent/Chat tab in Cursor (like clicking + / New Agent)."
-    )
+    category = "cursor"
+    description = "UI: Start a new Agent/Chat in Cursor (hotkey + palette)."
     parameters = []
 
     async def execute(self, **_: Any) -> ToolResult:
         title = await _focus_cursor()
         if not title:
             return ToolResult(success=False, output="Cursor window not found.")
-        # Try dedicated new-chat shortcuts, then palette
         pg = _pg()
-        pg.hotkey("ctrl", "n")
-        await asyncio.sleep(0.25)
-        await _palette("Chat: New Chat", submit=True)
+        pg.hotkey("ctrl", "l")
         await asyncio.sleep(0.3)
+        await _palette("Chat: New Chat", submit=True)
+        await asyncio.sleep(0.25)
         await _palette("New Agent", submit=True)
         return ToolResult(
             success=True,
-            output="Attempted to open a new Cursor Agent/Chat. Screenshot to verify.",
+            output="Attempted new Cursor Agent/Chat.",
             data={"window": title},
-        )
-
-
-class CursorOpenHistoryTool(BaseTool):
-    name = "cursor_open_history"
-    description = (
-        "Open Cursor chat/agent history (clock icon). "
-        "Then use screenshot + mouse_click to pick a past chat, or type to filter."
-    )
-    parameters = []
-
-    async def execute(self, **_: Any) -> ToolResult:
-        title = await _focus_cursor()
-        if not title:
-            return ToolResult(success=False, output="Cursor window not found.")
-        await _palette("Chat: Show History", submit=True)
-        await asyncio.sleep(0.25)
-        await _palette("Show Chat History", submit=True)
-        return ToolResult(
-            success=True,
-            output=(
-                "Opened chat history (or attempted). "
-                "take_screenshot + analyze_screenshot, then mouse_click the chat to open/import."
-            ),
-            data={"window": title},
-        )
-
-
-class CursorSelectModelTool(BaseTool):
-    name = "cursor_select_model"
-    description = (
-        "Set Cursor Agents/Composer model via Python by writing Cursor's state.vscdb "
-        "(no command palette, no UI clicking). "
-        "Examples: 'Sonnet 5', 'Grok', 'Composer 2.5', 'Opus 5', 'Gemini 3.1 Pro', 'Auto'. "
-        "Optionally reload Cursor so the UI picks it up immediately."
-    )
-    parameters = [
-        ToolParam(
-            name="model",
-            type="string",
-            description="Model search text (partial name OK), e.g. 'Sonnet 5' or 'Grok'.",
-        ),
-        ToolParam(
-            name="effort",
-            type="string",
-            description="Optional effort: Low, Medium, High (if the model supports it).",
-            required=False,
-            enum=["Low", "Medium", "High"],
-        ),
-        ToolParam(
-            name="reload",
-            type="boolean",
-            description="Reload Cursor window after writing so UI updates (default true).",
-            required=False,
-        ),
-    ]
-
-    async def execute(
-        self,
-        model: str,
-        effort: Optional[str] = None,
-        reload: bool = True,
-        **_: Any,
-    ) -> ToolResult:
-        from tools.cursor_state import get_composer_model, set_composer_model
-
-        try:
-            result = set_composer_model(model, effort=effort)
-        except Exception as e:
-            return ToolResult(success=False, output=f"Failed to set Cursor model via DB: {e}")
-
-        reload_note = "Reload skipped."
-        if reload:
-            title = await _focus_cursor()
-            if title:
-                try:
-                    await _palette("Developer: Reload Window", submit=True)
-                    reload_note = "Triggered Developer: Reload Window so Cursor applies the change."
-                    await asyncio.sleep(1.0)
-                except Exception as e:
-                    reload_note = f"Wrote DB but reload failed ({e}). Restart Cursor or reload manually."
-            else:
-                reload_note = "Wrote DB; Cursor window not found to reload — open Cursor to see it."
-
-        try:
-            current = get_composer_model()
-            verify = f"DB now reports model={current.display_name} ({current.model_id}), effort={current.effort}."
-        except Exception:
-            verify = "Could not re-read DB for verification."
-
-        return ToolResult(
-            success=True,
-            output=(
-                f"Set Cursor model via Python/state.vscdb: '{result['display_name']}' "
-                f"({result['model_id']}) from query '{model}'. {verify} {reload_note}"
-            ),
-            data=result,
-        )
-
-
-class CursorSetEffortTool(BaseTool):
-    name = "cursor_set_effort"
-    description = (
-        "Set Cursor Agent effort (Low / Medium / High) by writing Cursor state.vscdb in Python. "
-        "No UI clicking / command palette."
-    )
-    parameters = [
-        ToolParam(
-            name="effort",
-            type="string",
-            description="Effort level.",
-            enum=["Low", "Medium", "High"],
-        ),
-        ToolParam(
-            name="reload",
-            type="boolean",
-            description="Reload Cursor window after writing (default true).",
-            required=False,
-        ),
-    ]
-
-    async def execute(self, effort: str, reload: bool = True, **_: Any) -> ToolResult:
-        from tools.cursor_state import set_composer_effort
-
-        try:
-            result = set_composer_effort(effort)
-        except Exception as e:
-            return ToolResult(success=False, output=f"Failed to set effort via DB: {e}")
-
-        reload_note = "Reload skipped."
-        if reload:
-            title = await _focus_cursor()
-            if title:
-                try:
-                    await _palette("Developer: Reload Window", submit=True)
-                    reload_note = "Triggered Developer: Reload Window."
-                    await asyncio.sleep(1.0)
-                except Exception as e:
-                    reload_note = f"Wrote DB but reload failed ({e})."
-            else:
-                reload_note = "Wrote DB; Cursor not open to reload."
-
-        return ToolResult(
-            success=True,
-            output=(
-                f"Set Cursor effort to '{result['effort']}' for model {result['model_id']} "
-                f"via Python/state.vscdb. {reload_note}"
-            ),
-            data=result,
         )
 
 
 class CursorTypeInChatTool(BaseTool):
     name = "cursor_type_in_chat"
+    category = "cursor"
     description = (
-        "Type (paste) a prompt into Cursor Agent/Chat input and optionally send. "
-        "Use mode=agent for the right-side Agents panel."
+        "UI: Paste a prompt into Cursor Agent/Chat input and optionally send Enter."
     )
     parameters = [
         ToolParam(name="text", type="string", description="Prompt text to send."),
@@ -442,20 +529,18 @@ class CursorTypeInChatTool(BaseTool):
 
 class CursorAddContextTool(BaseTool):
     name = "cursor_add_context"
-    description = (
-        "Add @-context in Cursor chat (files/folders/docs). "
-        "Types @ then the query so the user/agent can pick from the picker."
-    )
+    category = "cursor"
+    description = "UI: Type @query in Cursor chat to attach file/folder context."
     parameters = [
         ToolParam(
             name="query",
             type="string",
-            description="Text after @: e.g. 'main.py' or 'README' or folder name.",
+            description="Text after @: e.g. 'main.py'.",
         ),
         ToolParam(
             name="confirm",
             type="boolean",
-            description="Press Enter to confirm first match. Default true.",
+            description="Press Enter on first match. Default true.",
             required=False,
         ),
     ]
@@ -474,48 +559,64 @@ class CursorAddContextTool(BaseTool):
             await asyncio.sleep(0.25)
         return ToolResult(
             success=True,
-            output=f"Inserted @{query} context picker in Cursor chat.",
+            output=f"Inserted @{query} in Cursor chat.",
             data={"query": query, "window": title},
         )
 
 
+# Back-compat aliases used by older prompts / imports
+class CursorOpenHistoryTool(CursorListChatsTool):
+    name = "cursor_open_history"
+    always_on = False
+    description = (
+        "Alias of cursor_list_chats (Python). Lists chats — then use "
+        "cursor_open_chat_session(composer_id=...)."
+    )
+
+
 class CursorImportChatTool(BaseTool):
     name = "cursor_import_chat"
+    category = "cursor"
     description = (
-        "Open/import a previous Cursor chat from history. "
-        "Opens history, optionally types a filter, then you should screenshot "
-        "and mouse_click the matching chat. If filter is empty, just opens history."
+        "Find a past chat by filter (Python list) and open the best match via DB. "
+        "Prefer cursor_list_chats + cursor_open_chat_session for more control."
     )
     parameters = [
         ToolParam(
             name="filter",
             type="string",
-            description="Optional text to filter history (chat title keywords).",
+            description="Title keywords to find the chat.",
+        ),
+        ToolParam(
+            name="reload",
+            type="boolean",
+            description="Reload Cursor after opening (default true).",
             required=False,
         ),
     ]
 
-    async def execute(self, filter: Optional[str] = None, **_: Any) -> ToolResult:
-        title = await _focus_cursor()
-        if not title:
-            return ToolResult(success=False, output="Cursor window not found.")
-        pg = _pg()
-        pg.hotkey("ctrl", "l")
-        await asyncio.sleep(0.35)
-        await _palette("Chat: Show History", submit=True)
-        await asyncio.sleep(0.35)
-        await _palette("Show Chat History", submit=True)
-        await asyncio.sleep(0.4)
-        if filter:
-            await _paste(filter)
-            await asyncio.sleep(0.4)
+    async def execute(
+        self,
+        filter: str,
+        reload: bool = True,
+        **_: Any,
+    ) -> ToolResult:
+        from tools.cursor_state import list_chats, open_chat_session
+
+        chats = list_chats(filter, limit=5)
+        if not chats:
+            return ToolResult(success=False, output=f"No chats matched '{filter}'.")
+        best = chats[0]
+        try:
+            result = open_chat_session(best["composer_id"])
+        except Exception as e:
+            return ToolResult(success=False, output=str(e))
+        reload_note = await _reload_cursor() if reload else "Reload skipped."
         return ToolResult(
             success=True,
             output=(
-                "Opened Cursor chat history"
-                + (f" and filtered by '{filter}'" if filter else "")
-                + ". NEXT: take_screenshot, analyze_screenshot to find the chat row, "
-                "then mouse_click it to open/import that chat."
+                f"Opened best match '{best['name']}' ({best['composer_id']}). "
+                f"{reload_note}"
             ),
-            data={"filter": filter, "window": title},
+            data={"match": best, "open": result},
         )

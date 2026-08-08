@@ -1,11 +1,12 @@
-"""Tool base classes and registry."""
+"""Tool base classes and registry (with optional tool discovery to save tokens)."""
 
 from __future__ import annotations
 
 import json
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 
 @dataclass
@@ -44,6 +45,10 @@ class BaseTool(ABC):
     parameters: List[ToolParam] = []
     # If True, agent may ask user confirmation when REQUIRE_CONFIRMATION is on
     destructive: bool = False
+    # Group for search_tools / discovery (filesystem, cursor, screen, …)
+    category: str = "general"
+    # Always expose schema even when TOOL_DISCOVERY is on
+    always_on: bool = False
 
     @abstractmethod
     async def execute(self, **kwargs: Any) -> ToolResult:
@@ -81,15 +86,51 @@ class BaseTool(ABC):
             },
         }
 
+    def brief(self) -> Dict[str, str]:
+        return {
+            "name": self.name,
+            "category": self.category,
+            "description": self.description,
+        }
+
+
+DEFAULT_CORE_TOOLS: Set[str] = {
+    "search_tools",
+    "list_directory",
+    "read_file",
+    "search_files",
+    "take_screenshot",
+    "analyze_screenshot",
+    "open_application",
+    "open_folder_in_cursor",
+    "run_shell",
+    "cursor_select_model",
+    "cursor_get_model",
+    "cursor_list_models",
+    "cursor_list_chats",
+    "cursor_open_chat_session",
+}
+
 
 class ToolRegistry:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        discovery: bool = True,
+        core_tools: Optional[Set[str]] = None,
+    ) -> None:
         self._tools: Dict[str, BaseTool] = {}
+        self.discovery = discovery
+        self.core_tools: Set[str] = set(core_tools or DEFAULT_CORE_TOOLS)
+        # Enabled for the current agent run (reset each run)
+        self._session_enabled: Set[str] = set()
 
     def register(self, tool: BaseTool) -> None:
         if not tool.name:
             raise ValueError(f"Tool {tool!r} has no name")
         self._tools[tool.name] = tool
+        if tool.always_on:
+            self.core_tools.add(tool.name)
 
     def get(self, name: str) -> Optional[BaseTool]:
         return self._tools.get(name)
@@ -97,8 +138,59 @@ class ToolRegistry:
     def list(self) -> List[BaseTool]:
         return list(self._tools.values())
 
+    def reset_session(self) -> None:
+        self._session_enabled.clear()
+
+    def enable(self, names: List[str]) -> List[str]:
+        enabled: List[str] = []
+        for n in names:
+            if n in self._tools:
+                self._session_enabled.add(n)
+                enabled.append(n)
+        return enabled
+
+    def active_names(self) -> Set[str]:
+        if not self.discovery:
+            return set(self._tools.keys())
+        names = set(self.core_tools) | set(self._session_enabled)
+        # always include tools marked always_on
+        for t in self._tools.values():
+            if t.always_on:
+                names.add(t.name)
+        return {n for n in names if n in self._tools}
+
     def openai_tools(self) -> List[Dict[str, Any]]:
-        return [t.openai_schema() for t in self._tools.values()]
+        names = self.active_names()
+        # Stable order: core first, then alpha
+        ordered = sorted(
+            names,
+            key=lambda n: (0 if n in self.core_tools else 1, n),
+        )
+        return [self._tools[n].openai_schema() for n in ordered]
+
+    def search(self, query: str, limit: int = 12) -> List[Dict[str, Any]]:
+        q = (query or "").strip().lower()
+        tokens = [t for t in re.split(r"[^a-z0-9_]+", q) if t]
+        scored: List[tuple[int, BaseTool]] = []
+        for tool in self._tools.values():
+            blob = f"{tool.name} {tool.category} {tool.description}".lower()
+            score = 0
+            if not tokens:
+                score = 1
+            else:
+                for t in tokens:
+                    if t == tool.name:
+                        score += 100
+                    elif t in tool.name:
+                        score += 40
+                    elif t == tool.category:
+                        score += 30
+                    elif t in blob:
+                        score += 10
+            if score:
+                scored.append((score, tool))
+        scored.sort(key=lambda x: (-x[0], x[1].name))
+        return [t.brief() for _, t in scored[: max(1, min(limit, 40))]]
 
     async def call(
         self,
@@ -109,6 +201,11 @@ class ToolRegistry:
         tool = self.get(name)
         if tool is None:
             return ToolResult(success=False, output=f"Unknown tool: {name}")
+
+        # Allow calling any registered tool even if not in active schemas
+        # (model may remember a name from search_tools). Auto-enable it.
+        if self.discovery and name not in self.active_names():
+            self._session_enabled.add(name)
 
         args = dict(arguments or {})
         confirmed = bool(args.pop("confirm", False))
