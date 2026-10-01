@@ -133,7 +133,6 @@ def build_registry(settings: Settings, llm_client: Any) -> ToolRegistry:
     reg = ToolRegistry(discovery=settings.tool_discovery, core_tools=core)
     ws = settings.workspace
     shot = settings.screenshot_dir
-    cursor = settings.cursor_path
 
     search = SearchToolsTool(reg)
     catalog = ListToolCatalogTool(reg)
@@ -149,9 +148,9 @@ def build_registry(settings: Settings, llm_client: Any) -> ToolRegistry:
     reg.register(SearchFilesTool(ws))
     reg.register(OpenInExplorerTool(ws))
 
-    reg.register(OpenApplicationTool(cursor))
+    reg.register(OpenApplicationTool())
     reg.register(OpenUrlTool())
-    reg.register(OpenFolderInCursorTool(ws, cursor))
+    reg.register(OpenFolderInCursorTool(ws))
 
     reg.register(CursorGetModelTool())
     reg.register(CursorListModelsTool())

@@ -63,7 +63,6 @@ class Settings:
     agent_max_tool_rounds: int
     agent_screenshot_dir: str
     agent_workspace: str
-    cursor_path: str
     require_confirmation: bool
     tool_discovery: bool
     tool_core: str
@@ -92,7 +91,6 @@ class Settings:
             or "data/screenshots",
             agent_workspace=_env("AGENT_WORKSPACE")
             or str(Path.home() / "Desktop"),
-            cursor_path=_env("CURSOR_PATH"),
             require_confirmation=_env_bool("REQUIRE_CONFIRMATION", False),
             tool_discovery=_env_bool("TOOL_DISCOVERY", True),
             tool_core=_env("TOOL_CORE"),

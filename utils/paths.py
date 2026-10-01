@@ -16,11 +16,8 @@ COMMON_CURSOR_PATHS = [
 ]
 
 
-def find_cursor_exe(configured: str = "") -> Optional[Path]:
-    if configured:
-        p = Path(configured)
-        if p.exists():
-            return p
+def find_cursor_exe() -> Optional[Path]:
+    """Auto-detect Cursor CLI / executable (PATH, then common install folders)."""
     which = shutil.which("cursor")
     if which:
         return Path(which)

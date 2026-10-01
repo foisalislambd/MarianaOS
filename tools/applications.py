@@ -6,7 +6,7 @@ import asyncio
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from tools.base import BaseTool, ToolParam, ToolResult
 from utils.paths import find_cursor_exe, safe_resolve
@@ -32,9 +32,6 @@ class OpenApplicationTool(BaseTool):
         ),
     ]
 
-    def __init__(self, cursor_path: str = "") -> None:
-        self.cursor_path = cursor_path
-
     async def execute(self, app: str, args: str = "", **_: Any) -> ToolResult:
         app_l = app.strip().lower()
         known = {
@@ -51,11 +48,14 @@ class OpenApplicationTool(BaseTool):
         }
 
         if app_l in ("cursor", "cursor ide"):
-            exe = find_cursor_exe(self.cursor_path)
+            exe = find_cursor_exe()
             if not exe:
                 return ToolResult(
                     success=False,
-                    output="Cursor.exe not found. Set CURSOR_PATH in .env",
+                    output=(
+                        "Cursor.exe not found on PATH or common install locations. "
+                        "Install Cursor or add it to PATH."
+                    ),
                 )
             cmd = [str(exe)]
         elif app_l in known:
@@ -74,7 +74,6 @@ class OpenApplicationTool(BaseTool):
                 stderr=subprocess.DEVNULL,
             )
         except FileNotFoundError:
-            # Try shell start
             try:
                 os.startfile(app)  # noqa: S606
             except Exception as e:
@@ -118,9 +117,8 @@ class OpenFolderInCursorTool(BaseTool):
         ),
     ]
 
-    def __init__(self, workspace: Path, cursor_path: str = "") -> None:
+    def __init__(self, workspace: Path) -> None:
         self.workspace = workspace
-        self.cursor_path = cursor_path
 
     async def execute(
         self, path: str, new_window: bool = False, **_: Any
@@ -129,7 +127,7 @@ class OpenFolderInCursorTool(BaseTool):
         if not target.exists():
             return ToolResult(success=False, output=f"Path not found: {target}")
 
-        exe = find_cursor_exe(self.cursor_path)
+        exe = find_cursor_exe()
         cmd: list[str]
         if exe:
             cmd = [str(exe)]
@@ -137,7 +135,6 @@ class OpenFolderInCursorTool(BaseTool):
                 cmd.append("-n")
             cmd.append(str(target))
         else:
-            # CLI shim
             cmd = ["cursor"]
             if new_window:
                 cmd.append("-n")
