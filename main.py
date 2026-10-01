@@ -7,7 +7,6 @@ import signal
 import sys
 from pathlib import Path
 
-# Ensure project root on sys.path
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -19,7 +18,7 @@ from core.agent import Agent
 from core.llm import LLMClient
 from core.memory import ConversationMemory
 from tools import build_registry
-from utils.logging import console, get_logger, setup_logging
+from utils.logging import get_logger, setup_logging
 
 
 async def main() -> None:
@@ -28,20 +27,21 @@ async def main() -> None:
     log = get_logger("marianaos")
     llm_cfg = settings.llm
 
-    console.print(f"[bold cyan]{settings.agent_name}[/] — Desktop AI Agent")
-    console.print(f"Workspace: [green]{settings.workspace}[/]")
-    console.print(
-        f"Provider: [magenta]{llm_cfg.provider_name}[/] ({llm_cfg.provider_id})"
-    )
-    console.print(f"Model: [yellow]{llm_cfg.model}[/]")
-    console.print(f"Vision: [yellow]{llm_cfg.vision_model}[/]")
-    console.print(f"API: [dim]{llm_cfg.base_url}[/]")
+    print(f"{settings.agent_name} — Desktop AI Agent")
+    print(f"Workspace: {settings.workspace}")
+    print(f"Provider: {llm_cfg.provider_name} ({llm_cfg.provider_id})")
+    print(f"Model: {llm_cfg.model}")
+    print(f"Vision: {llm_cfg.vision_model}")
+    print(f"API: {llm_cfg.base_url}")
     if llm_cfg.notes:
-        console.print(f"[dim]{llm_cfg.notes}[/]")
-    console.print(
-        f"Allowed Telegram users: "
+        print(llm_cfg.notes)
+    print(
+        "Allowed Telegram users: "
         f"{settings.allowed_user_ids or '[NONE — set TELEGRAM_ALLOWED_USERS!]'}"
     )
+
+    if not llm_cfg.api_key and llm_cfg.provider_id not in {"ollama", "lmstudio"}:
+        print("WARNING: LLM_API_KEY is empty. Set it in .env (OpenRouter recommended).")
 
     llm = LLMClient.from_resolved(
         llm_cfg,
@@ -52,7 +52,8 @@ async def main() -> None:
     memory = ConversationMemory(max_messages=40)
     agent = Agent(settings, llm, tools, memory)
 
-    console.print(f"Registered [bold]{len(tools.list())}[/] tools")
+    print(f"Registered {len(tools.list())} tools")
+    print(f"Core tools active: {len(tools.active_names())}")
 
     channel = TelegramChannel(
         token=settings.telegram_bot_token,
@@ -74,13 +75,9 @@ async def main() -> None:
             on_progress=on_progress,
         )
 
-        # Prefer sending only the last few screenshots to avoid spam
         media = result.media_paths[-3:] if result.media_paths else []
-        footer = ""
-        if result.tool_trace:
-            footer = "\n\n---\ntools: `" + "`, `".join(result.tool_trace[-8:]) + "`"
         return OutboundMessage(
-            text=(result.text + footer).strip(),
+            text=result.text,
             media_paths=media,
             parse_mode="rich",
         )
@@ -93,7 +90,6 @@ async def main() -> None:
     def _ask_stop(*_: object) -> None:
         stop_event.set()
 
-    # Unix: asyncio signal handlers. Windows: rely on KeyboardInterrupt below.
     if sys.platform != "win32":
         try:
             loop = asyncio.get_running_loop()
@@ -102,10 +98,9 @@ async def main() -> None:
         except (NotImplementedError, RuntimeError):
             pass
 
-    console.print("[bold green]Agent running. Press Ctrl+C to stop.[/]")
+    print("Agent running. Press Ctrl+C to stop.")
     try:
         if sys.platform == "win32":
-            # Windows: polling wait so KeyboardInterrupt is delivered reliably
             while not stop_event.is_set():
                 try:
                     await asyncio.wait_for(stop_event.wait(), timeout=1.0)
@@ -117,7 +112,7 @@ async def main() -> None:
         pass
     finally:
         await channel.stop()
-        console.print("[dim]Shutdown complete.[/]")
+        print("Shutdown complete.")
 
 
 if __name__ == "__main__":

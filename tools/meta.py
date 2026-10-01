@@ -63,7 +63,7 @@ class ListToolCatalogTool(BaseTool):
         ToolParam(
             name="category",
             type="string",
-            description="Optional category filter: filesystem, cursor, screen, input, window, system, apps, meta.",
+            description="Optional category filter: filesystem, cursor, ui, screen, input, window, system, apps, meta.",
             required=False,
         ),
     ]

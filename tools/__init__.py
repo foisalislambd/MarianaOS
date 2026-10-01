@@ -51,6 +51,13 @@ from tools.system import (
     RunShellTool,
     SystemInfoTool,
 )
+from tools.ui_automation import (
+    ClickControlTool,
+    FindControlTool,
+    GetUiTreeTool,
+    InvokeControlTool,
+    SetControlValueTool,
+)
 from tools.vision import AnalyzeScreenshotTool
 from tools.window import (
     FocusWindowTool,
@@ -61,10 +68,8 @@ from tools.window import (
 )
 
 TOOL_CATEGORIES: Dict[str, str] = {
-    # meta
     "search_tools": "meta",
     "list_tool_catalog": "meta",
-    # filesystem
     "list_directory": "filesystem",
     "read_file": "filesystem",
     "write_file": "filesystem",
@@ -73,11 +78,9 @@ TOOL_CATEGORIES: Dict[str, str] = {
     "move_path": "filesystem",
     "search_files": "filesystem",
     "open_in_explorer": "filesystem",
-    # apps
     "open_application": "apps",
     "open_url": "apps",
     "open_folder_in_cursor": "apps",
-    # cursor
     "cursor_get_model": "cursor",
     "cursor_list_models": "cursor",
     "cursor_select_model": "cursor",
@@ -91,11 +94,14 @@ TOOL_CATEGORIES: Dict[str, str] = {
     "cursor_new_chat": "cursor",
     "cursor_type_in_chat": "cursor",
     "cursor_add_context": "cursor",
-    # screen
+    "get_ui_tree": "ui",
+    "find_control": "ui",
+    "click_control": "ui",
+    "set_control_value": "ui",
+    "invoke_control": "ui",
     "take_screenshot": "screen",
     "list_screenshots": "screen",
     "analyze_screenshot": "screen",
-    # input
     "mouse_click": "input",
     "mouse_move": "input",
     "mouse_scroll": "input",
@@ -104,13 +110,11 @@ TOOL_CATEGORIES: Dict[str, str] = {
     "press_key": "input",
     "get_mouse_position": "input",
     "wait": "input",
-    # window
     "list_windows": "window",
     "focus_window": "window",
     "get_active_window": "window",
     "minimize_window": "window",
     "maximize_window": "window",
-    # system
     "system_info": "system",
     "run_shell": "system",
     "list_processes": "system",
@@ -131,13 +135,11 @@ def build_registry(settings: Settings, llm_client: Any) -> ToolRegistry:
     shot = settings.screenshot_dir
     cursor = settings.cursor_path
 
-    # Meta (needs registry ref — registered first, then wired)
     search = SearchToolsTool(reg)
     catalog = ListToolCatalogTool(reg)
     reg.register(search)
     reg.register(catalog)
 
-    # Filesystem
     reg.register(ListDirectoryTool(ws))
     reg.register(ReadFileTool(ws))
     reg.register(WriteFileTool(ws))
@@ -147,12 +149,10 @@ def build_registry(settings: Settings, llm_client: Any) -> ToolRegistry:
     reg.register(SearchFilesTool(ws))
     reg.register(OpenInExplorerTool(ws))
 
-    # Apps
     reg.register(OpenApplicationTool(cursor))
     reg.register(OpenUrlTool())
     reg.register(OpenFolderInCursorTool(ws, cursor))
 
-    # Cursor IDE — Python-first, then UI fallbacks
     reg.register(CursorGetModelTool())
     reg.register(CursorListModelsTool())
     reg.register(CursorSelectModelTool())
@@ -167,10 +167,16 @@ def build_registry(settings: Settings, llm_client: Any) -> ToolRegistry:
     reg.register(CursorTypeInChatTool())
     reg.register(CursorAddContextTool())
 
-    # Screen / input
+    # UI Automation first-class tools
+    reg.register(GetUiTreeTool())
+    reg.register(FindControlTool())
+    reg.register(ClickControlTool())
+    reg.register(SetControlValueTool())
+    reg.register(InvokeControlTool())
+
     reg.register(TakeScreenshotTool(shot))
     reg.register(ListScreenshotsTool(shot))
-    reg.register(AnalyzeScreenshotTool(llm_client, settings.llm_vision_model))
+    reg.register(AnalyzeScreenshotTool(llm_client, settings.llm.vision_model))
     reg.register(MouseClickTool())
     reg.register(MouseMoveTool())
     reg.register(MouseScrollTool())
@@ -180,14 +186,12 @@ def build_registry(settings: Settings, llm_client: Any) -> ToolRegistry:
     reg.register(GetMousePositionTool())
     reg.register(WaitTool())
 
-    # Windows
     reg.register(ListWindowsTool())
     reg.register(FocusWindowTool())
     reg.register(GetActiveWindowTool())
     reg.register(MinimizeWindowTool())
     reg.register(MaximizeWindowTool())
 
-    # System
     reg.register(SystemInfoTool())
     reg.register(RunShellTool())
     reg.register(ListProcessesTool())

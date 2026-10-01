@@ -1,10 +1,8 @@
-"""Convert LLM Markdown → Telegram formats.
+"""Telegram message formatting helpers.
 
-Prefer Telegram Bot API Rich Messages (sendRichMessage + markdown field),
-which accept GitHub-flavored-style Markdown (headings, lists, tables, code).
-Fallback: HTML parse_mode for older clients / API errors.
-Docs: https://core.telegram.org/bots/api#sendrichmessage
-       https://core.telegram.org/bots/api#formatting-options
+Primary path: Bot API Rich Messages (`sendRichMessage` + markdown field) —
+GitHub-flavored-style Markdown (headings, lists, tables, code, bold/italic).
+Fallback: HTML `sendMessage` for older API errors.
 """
 
 from __future__ import annotations
@@ -14,7 +12,7 @@ import re
 from typing import List
 
 
-RICH_MAX_CHARS = 30000  # Telegram rich limit is 32768; keep headroom
+RICH_MAX_CHARS = 30000  # Telegram rich limit ~32768; keep headroom
 HTML_MAX_CHARS = 4000
 
 
@@ -28,7 +26,6 @@ def chunk_text(text: str, size: int) -> List[str]:
     while start < len(text):
         end = min(start + size, len(text))
         if end < len(text):
-            # Prefer breaking on paragraph / newline
             split_at = text.rfind("\n\n", start, end)
             if split_at <= start:
                 split_at = text.rfind("\n", start, end)
@@ -40,34 +37,43 @@ def chunk_text(text: str, size: int) -> List[str]:
 
 
 def normalize_llm_markdown(text: str) -> str:
-    """Light cleanup so LLM output plays nicer with Telegram Rich Markdown."""
+    """Cleanup LLM Markdown for Telegram Rich Message markdown field."""
     t = (text or "").replace("\r\n", "\n").strip()
     if not t:
         return ""
-    # Convert ATX underline-style leftovers; keep standard GFM
+    # Strip accidental HTML the model sometimes emits
+    if "<b>" in t or "<code>" in t or "<pre>" in t:
+        t = (
+            t.replace("<b>", "**")
+            .replace("</b>", "**")
+            .replace("<i>", "*")
+            .replace("</i>", "*")
+            .replace("<code>", "`")
+            .replace("</code>", "`")
+        )
+        t = re.sub(r"</?pre[^>]*>", "```", t)
     # Collapse 3+ blank lines
     t = re.sub(r"\n{3,}", "\n\n", t)
+    # Soft-wrap huge unbroken lines (rare)
     return t
 
 
 def markdown_to_telegram_html(text: str) -> str:
-    """Best-effort Markdown → Telegram HTML (fallback path)."""
+    """Best-effort Markdown → Telegram HTML (fallback when rich API fails)."""
     t = normalize_llm_markdown(text)
     if not t:
         return ""
 
     n = len(t)
-
-    # Extract fenced code blocks first
     fence_re = re.compile(r"```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```", re.MULTILINE)
     last = 0
-    segments: List[tuple[str, str]] = []  # ("text"|"code", payload) ; code payload = lang\0body
+    segments: List[tuple[str, str]] = []
     for m in fence_re.finditer(t):
         if m.start() > last:
             segments.append(("text", t[last : m.start()]))
         lang = (m.group(1) or "").strip()
         body = m.group(2) or ""
-        segments.append(("code", f"{lang}\0{body.rstrip('\n')}"))
+        segments.append(("code", f"{lang}\0{body.rstrip(chr(10))}"))
         last = m.end()
     if last < n:
         segments.append(("text", t[last:]))
@@ -78,7 +84,9 @@ def markdown_to_telegram_html(text: str) -> str:
             lang, _, body = payload.partition("\0")
             esc = html.escape(body)
             if lang:
-                out.append(f'<pre><code class="language-{html.escape(lang)}">{esc}</code></pre>')
+                out.append(
+                    f'<pre><code class="language-{html.escape(lang)}">{esc}</code></pre>'
+                )
             else:
                 out.append(f"<pre>{esc}</pre>")
             continue
@@ -87,28 +95,20 @@ def markdown_to_telegram_html(text: str) -> str:
 
 
 def _inline_md_to_html(text: str) -> str:
-    # Escape first, then re-introduce tags from markdown patterns on escaped text
-    # Work line-by-line for headers / lists / quotes
     lines_out: List[str] = []
     for line in text.split("\n"):
         raw = line
-        # Headers
         hm = re.match(r"^(#{1,6})\s+(.*)$", raw)
         if hm:
-            content = _format_inline(hm.group(2))
-            lines_out.append(f"<b>{content}</b>")
+            lines_out.append(f"<b>{_format_inline(hm.group(2))}</b>")
             continue
-        # Blockquote
         if raw.startswith("> "):
-            content = _format_inline(raw[2:])
-            lines_out.append(f"<blockquote>{content}</blockquote>")
+            lines_out.append(f"<blockquote>{_format_inline(raw[2:])}</blockquote>")
             continue
-        # Unordered list
         if re.match(r"^[-*+]\s+", raw):
             content = _format_inline(re.sub(r"^[-*+]\s+", "", raw))
             lines_out.append(f"- {content}")
             continue
-        # Ordered list
         if re.match(r"^\d+\.\s+", raw):
             content = _format_inline(re.sub(r"^\d+\.\s+", "", raw))
             num = re.match(r"^(\d+)\.", raw).group(1)  # type: ignore[union-attr]
@@ -118,13 +118,10 @@ def _inline_md_to_html(text: str) -> str:
             lines_out.append("")
             continue
         lines_out.append(_format_inline(raw))
-    # Join with newlines — Telegram HTML preserves \n as line breaks in many clients
     return "\n".join(lines_out)
 
 
 def _format_inline(text: str) -> str:
-    """Escape + apply bold/italic/code/links on a single line."""
-    # Protect inline code first
     pieces: List[str] = []
     pos = 0
     for m in re.finditer(r"`([^`]+)`", text):
@@ -141,19 +138,15 @@ def _format_inline(text: str) -> str:
             rendered.append(f"<code>{html.escape(val)}</code>")
             continue
         s = html.escape(val)
-        # links [text](url)
         s = re.sub(
             r"\[([^\]]+)\]\((https?://[^)\s]+)\)",
             lambda m: f'<a href="{m.group(2)}">{m.group(1)}</a>',
             s,
         )
-        # bold **text** or __text__
         s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
         s = re.sub(r"__(.+?)__", r"<b>\1</b>", s)
-        # italic *text* or _text_ (simple)
         s = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", s)
         s = re.sub(r"(?<!_)_(?!_)(.+?)(?<!_)_(?!_)", r"<i>\1</i>", s)
-        # strikethrough ~~text~~
         s = re.sub(r"~~(.+?)~~", r"<s>\1</s>", s)
         rendered.append(s)
     return "".join(rendered)

@@ -1,4 +1,4 @@
-"""Agent system prompt and tool-calling loop."""
+"""Agent system prompt and tool-calling loop — human-like desktop operator."""
 
 from __future__ import annotations
 
@@ -17,44 +17,68 @@ log = get_logger("marianaos.agent")
 ProgressCallback = Callable[[str], Awaitable[None]]
 
 
-SYSTEM_PROMPT = """You are {agent_name}, a powerful desktop AI agent controlling a Windows PC for the user via Telegram (and later other channels).
+SYSTEM_PROMPT = """You are {agent_name}, a capable Windows desktop operator helping the user via Telegram.
 
-## Tool discovery (token saver)
+You control a real unlocked PC. Work like a careful human assistant: understand the goal, look at the UI state, act with the right tools, verify, then report clearly.
+
+## Workspace
+Default workspace root: `{workspace}`
+Resolve relative paths against this folder unless the user gives an absolute path.
+
+## Tool discovery
 {tool_discovery_rules}
 
-## Cursor — prefer Python tools (no UI clicking)
-- cursor_get_model / cursor_list_models / cursor_select_model / cursor_set_effort → state.vscdb
-- cursor_list_chats / cursor_open_chat_session / cursor_import_chat → Python chat headers + workspace DB
-- UI-only when needed: cursor_type_in_chat, cursor_add_context, cursor_new_chat, cursor_open_chat, cursor_command_palette
-- NEVER use command palette or mouse to change models.
+## How to operate (human workflow)
+1. **Understand** the goal. If ambiguous, make a reasonable assumption and state it briefly.
+2. **Observe** before acting when the UI matters:
+   - `list_windows` / `get_active_window` / `focus_window`
+   - `get_ui_tree` or `find_control` to locate buttons, edits, menus by name
+3. **Act** with the most reliable tool:
+   - Named UI: `click_control`, `set_control_value`, `invoke_control`
+   - Shortcuts: `hotkey`, `press_key`, `type_text`
+   - Apps: `open_application`, `open_url`, `open_folder_in_cursor`
+   - Files: `list_directory`, `read_file`, `write_file`, `search_files`, …
+   - Shell: `run_shell` only when dedicated tools are not enough
+4. **Wait** briefly after launches/animations (`wait`) before the next UI step.
+5. **Recover** if something fails: re-list windows, re-read UI tree, try an alternate control name or hotkey. Do not spam the same failing call.
+6. **Finish** the whole request end-to-end in one turn when possible. Then reply with what you did and the outcome.
 
-## Operating principles
-1. Complete the user's request end-to-end.
-2. Need the screen? take_screenshot then analyze_screenshot.
-3. Prefer dedicated tools over raw mouse/hotkey.
-4. After visual/UI tasks, take a final screenshot (media goes to Telegram).
-5. Destructive tools need confirm=true when confirmation mode is on.
-6. Keep Telegram replies concise. English.
-7. mouse_click uses absolute primary-monitor pixels.
-8. Workspace default: {workspace}
-9. Never invent tool results.
+## Screenshots (rare)
+Do **not** screenshot by default.
+Use `take_screenshot` / `analyze_screenshot` only when:
+- the user explicitly asks for a screenshot, OR
+- UI Automation cannot see the control (canvas / game / custom-drawn UI) and you need vision.
+When sending a screenshot back to the user: `take_screenshot(send_to_user=true)`.
 
-## Response formatting (Telegram Rich Messages)
-Format final replies with Markdown:
-- `#` / `##` headings for sections
-- **bold** for key results, `inline code` for paths/commands
-- fenced ```language``` code blocks when showing code
-- `-` bullet lists for steps/results
-Keep it mobile-readable; avoid huge tables.
+## Cursor IDE
+Prefer Python/DB tools (no clicking):
+- `cursor_get_model`, `cursor_list_models`, `cursor_select_model`, `cursor_set_effort`
+- `cursor_list_chats`, `cursor_open_chat_session`
+UI only when needed: `cursor_type_in_chat`, `cursor_new_chat`, `cursor_open_chat`, `cursor_command_palette`
+Never change models via the command palette.
+
+## Safety
+- Destructive tools (`delete_path`, `run_shell`, overwrite writes, …) require `confirm=true` when confirmation mode is on.
+- Never invent tool results. Never claim success if a tool failed.
+- Do not exfiltrate secrets. Be careful with shell commands.
+
+## Telegram reply style (Rich Markdown)
+Telegram renders real Markdown. Format the **final** user reply with:
+- `#` / `##` headings for the result
+- **bold** for key outcomes, `inline code` for paths/commands
+- fenced ```language``` blocks for multi-line code/output
+- short bullet lists for steps or results
+Keep it mobile-readable. English. No giant dumps — summarize, put details in code fences if needed.
+Do not put tool JSON in the final reply.
 """
 
 
-DISCOVERY_ON = """Only a CORE tool set is loaded in each request.
-If you need another capability, call search_tools(query="...") first — that enables matching tools for this run.
-Examples: search_tools("mouse click"), search_tools("clipboard"), search_tools("cursor type chat").
-Use list_tool_catalog for a short name list by category."""
+DISCOVERY_ON = """Only a CORE tool set is loaded each request.
+If you need another capability, call `search_tools(query="...")` first — that enables matching tools for this run.
+Examples: `search_tools("screenshot")`, `search_tools("clipboard")`, `search_tools("mouse scroll")`, `search_tools("delete file")`.
+Use `list_tool_catalog` for a short name list by category."""
 
-DISCOVERY_OFF = """All tools are available in every request. You may still call search_tools to browse by keyword."""
+DISCOVERY_OFF = """All tools are available in every request. You may still call `search_tools` to browse by keyword."""
 
 
 @dataclass
@@ -89,6 +113,21 @@ class Agent:
             ),
         }
 
+    def _user_reply(self, final_text: str, trace: List[str]) -> str:
+        text = (final_text or "").strip() or "Done."
+        if not trace:
+            return text
+        # Compact footer — looks good in rich markdown
+        names = []
+        for t in trace[-10:]:
+            name = t.split(":", 1)[0].strip()
+            if name and name not in names:
+                names.append(name)
+        if not names:
+            return text
+        footer = "\n\n---\n*Tools:* " + ", ".join(f"`{n}`" for n in names)
+        return text + footer
+
     def _finish(
         self,
         session_id: str,
@@ -96,14 +135,20 @@ class Agent:
         all_media: List[str],
         trace: List[str],
     ) -> AgentResponse:
-        self.memory.add(session_id, {"role": "assistant", "content": final_text})
+        user_text = self._user_reply(final_text, trace)
+        # Memory keeps a short action note so follow-ups stay coherent
+        mem = user_text
+        if trace:
+            mem += "\n[actions: " + "; ".join(trace[-12:]) + "]"
+        self.memory.add(session_id, {"role": "assistant", "content": mem})
+
         seen: set[str] = set()
         unique_media: List[str] = []
         for m in all_media:
             if m not in seen and Path(m).exists():
                 seen.add(m)
                 unique_media.append(m)
-        return AgentResponse(text=final_text, media_paths=unique_media, tool_trace=trace)
+        return AgentResponse(text=user_text, media_paths=unique_media, tool_trace=trace)
 
     async def run(
         self,
@@ -118,6 +163,7 @@ class Agent:
         all_media: List[str] = []
         trace: List[str] = []
         final_text = ""
+        consecutive_fails = 0
 
         for round_i in range(self.settings.agent_max_tool_rounds):
             log.info(
@@ -135,7 +181,7 @@ class Agent:
                 log.exception("LLM error")
                 return self._finish(
                     session_id,
-                    f"LLM error: {e}",
+                    f"## LLM error\n\n`{e}`",
                     all_media,
                     trace,
                 )
@@ -148,7 +194,7 @@ class Agent:
 
             for tc in turn.tool_calls:
                 if on_progress:
-                    await on_progress(f"🔧 {tc.name}…")
+                    await on_progress(f"`{tc.name}`…")
 
                 log.info("Tool call: %s(%s)", tc.name, tc.arguments)
                 result: ToolResult = await self.tools.call(
@@ -156,22 +202,50 @@ class Agent:
                     tc.arguments,
                     require_confirmation=self.settings.require_confirmation,
                 )
-                trace.append(f"{tc.name}: {'ok' if result.success else 'fail'}")
+                status = "ok" if result.success else "fail"
+                trace.append(f"{tc.name}: {status}")
+
+                if result.success:
+                    consecutive_fails = 0
+                else:
+                    consecutive_fails += 1
 
                 if result.media_paths:
                     all_media.extend(result.media_paths)
+
+                # Keep tool payloads bounded for the model context
+                content = result.to_llm()
+                if len(content) > 12000:
+                    content = content[:12000] + "...[truncated]"
 
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "name": tc.name,
-                        "content": result.to_llm(),
+                        "content": content,
                     }
                 )
+
+            # Soft stop if the model is stuck failing
+            if consecutive_fails >= 5:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "[System] Several tools failed in a row. "
+                            "Stop retrying the same approach. Summarize what failed "
+                            "and what the user can do next."
+                        ),
+                    }
+                )
+                consecutive_fails = 0
         else:
+            done = ", ".join(t.split(":")[0] for t in trace[-8:]) if trace else "none"
             final_text = (
-                "Reached max tool rounds. Partial work may be done — check screenshots."
+                "## Partial result\n\n"
+                f"Reached the max tool rounds. Actions so far: {done or 'none'}.\n"
+                "Tell me to continue if you want me to keep going."
             )
 
         return self._finish(session_id, final_text, all_media, trace)

@@ -1,39 +1,32 @@
-"""System info and shell tools."""
+"""System info, shell, and clipboard tools (no psutil/pyperclip)."""
 
 from __future__ import annotations
 
 import asyncio
 import os
 import platform
+import subprocess
 from typing import Any
 
 from tools.base import BaseTool, ToolParam, ToolResult
+from utils import win_ui
 
 
 class SystemInfoTool(BaseTool):
     name = "system_info"
-    description = "Get basic system information (OS, CPU, memory, hostname)."
+    description = "Get basic system information (OS, hostname, Python, user)."
     parameters = []
 
     async def execute(self, **_: Any) -> ToolResult:
-        import psutil
-
-        mem = psutil.virtual_memory()
-        disk = psutil.disk_usage("C:\\" if os.name == "nt" else "/")
         info = {
             "hostname": platform.node(),
             "os": f"{platform.system()} {platform.release()} ({platform.version()})",
             "machine": platform.machine(),
             "processor": platform.processor(),
             "python": platform.python_version(),
-            "cpu_count": psutil.cpu_count(),
-            "cpu_percent": psutil.cpu_percent(interval=0.3),
-            "memory_total_gb": round(mem.total / (1024**3), 2),
-            "memory_used_gb": round(mem.used / (1024**3), 2),
-            "memory_percent": mem.percent,
-            "disk_total_gb": round(disk.total / (1024**3), 2),
-            "disk_used_percent": disk.percent,
+            "cpu_count": os.cpu_count(),
             "user": os.environ.get("USERNAME") or os.environ.get("USER"),
+            "workspace": os.environ.get("AGENT_WORKSPACE", ""),
         }
         lines = [f"{k}: {v}" for k, v in info.items()]
         return ToolResult(success=True, output="\n".join(lines), data=info)
@@ -114,7 +107,7 @@ class RunShellTool(BaseTool):
 
 class ListProcessesTool(BaseTool):
     name = "list_processes"
-    description = "List running processes, optionally filtered by name."
+    description = "List running processes via tasklist, optionally filtered by name."
     parameters = [
         ToolParam(
             name="filter",
@@ -131,22 +124,35 @@ class ListProcessesTool(BaseTool):
     ]
 
     async def execute(self, filter: str = "", limit: int = 30, **_: Any) -> ToolResult:
-        import psutil
+        try:
+            r = subprocess.run(
+                ["tasklist", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+        except Exception as e:
+            return ToolResult(success=False, output=f"tasklist failed: {e}")
 
+        fl = (filter or "").lower().strip()
         rows = []
-        fl = filter.lower().strip()
-        for p in psutil.process_iter(["pid", "name", "memory_info"]):
-            try:
-                name = p.info["name"] or ""
-                if fl and fl not in name.lower():
-                    continue
-                mem_mb = round((p.info["memory_info"].rss / (1024**2)), 1) if p.info["memory_info"] else 0
-                rows.append(f"{p.info['pid']:>6}  {mem_mb:>8} MB  {name}")
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+        for line in r.stdout.splitlines():
+            line = line.strip()
+            if not line:
                 continue
-            if len(rows) >= max(1, min(limit, 100)):
+            # "name","pid","session","session#","mem"
+            parts = [p.strip().strip('"') for p in line.split('","')]
+            if len(parts) < 2:
+                continue
+            name = parts[0].strip('"')
+            pid = parts[1].strip('"')
+            mem = parts[-1].strip('"') if len(parts) >= 5 else ""
+            if fl and fl not in name.lower():
+                continue
+            rows.append(f"{pid:>6}  {mem:>12}  {name}")
+            if len(rows) >= max(1, min(int(limit or 30), 100)):
                 break
-        header = f"{'PID':>6}  {'MEMORY':>8}     NAME\n"
+        header = f"{'PID':>6}  {'MEMORY':>12}  NAME\n"
         return ToolResult(
             success=True,
             output=header + "\n".join(rows) if rows else "No matching processes.",
@@ -160,17 +166,16 @@ class ClipboardGetTool(BaseTool):
     parameters = []
 
     async def execute(self, **_: Any) -> ToolResult:
-        import pyperclip
-
         try:
-            text = pyperclip.paste()
+            text = win_ui.get_clipboard()
         except Exception as e:
             return ToolResult(success=False, output=f"Clipboard read failed: {e}")
-        if len(text) > 8000:
-            shown = text[:8000] + "\n...[truncated]"
-        else:
-            shown = text
-        return ToolResult(success=True, output=shown or "(empty clipboard)", data={"length": len(text)})
+        shown = text if len(text) <= 8000 else text[:8000] + "\n...[truncated]"
+        return ToolResult(
+            success=True,
+            output=shown or "(empty clipboard)",
+            data={"length": len(text)},
+        )
 
 
 class ClipboardSetTool(BaseTool):
@@ -182,7 +187,5 @@ class ClipboardSetTool(BaseTool):
     ]
 
     async def execute(self, text: str, **_: Any) -> ToolResult:
-        import pyperclip
-
-        pyperclip.copy(text)
+        win_ui.set_clipboard(text)
         return ToolResult(success=True, output=f"Clipboard set ({len(text)} chars)")

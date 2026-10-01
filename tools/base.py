@@ -95,20 +95,39 @@ class BaseTool(ABC):
 
 
 DEFAULT_CORE_TOOLS: Set[str] = {
+    # meta
     "search_tools",
+    "list_tool_catalog",
+    # observe / UI
+    "list_windows",
+    "get_active_window",
+    "focus_window",
+    "get_ui_tree",
+    "find_control",
+    "click_control",
+    "set_control_value",
+    "invoke_control",
+    "hotkey",
+    "press_key",
+    "type_text",
+    "wait",
+    # apps / files
+    "open_application",
+    "open_url",
+    "open_folder_in_cursor",
     "list_directory",
     "read_file",
+    "write_file",
     "search_files",
-    "take_screenshot",
-    "analyze_screenshot",
-    "open_application",
-    "open_folder_in_cursor",
     "run_shell",
+    # cursor (python-first)
     "cursor_select_model",
     "cursor_get_model",
     "cursor_list_models",
     "cursor_list_chats",
     "cursor_open_chat_session",
+    "cursor_type_in_chat",
+    # screenshots stay discoverable via search_tools("screenshot")
 }
 
 

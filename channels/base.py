@@ -21,8 +21,8 @@ class InboundMessage:
 class OutboundMessage:
     text: str = ""
     media_paths: List[str] = field(default_factory=list)
-    # "rich" = Telegram Bot API sendRichMessage (GFM markdown) — best for AI replies
-    # "HTML" / "MarkdownV2" / None = legacy sendMessage parse modes
+    # "rich" = Telegram sendRichMessage(markdown=…) — preferred for AI replies
+    # "html" = legacy sendMessage HTML fallback
     parse_mode: Optional[str] = "rich"
 
 

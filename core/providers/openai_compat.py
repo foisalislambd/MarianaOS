@@ -1,10 +1,4 @@
-"""OpenAI Chat Completions compatible providers.
-
-Used for: OpenAI, OpenRouter, Groq, DeepSeek, Mistral, xAI, Together,
-Fireworks, Ollama, LM Studio, OpenCode Zen, and other OpenAI-compatible gateways.
-
-Docs: https://platform.openai.com/docs/api-reference/chat
-"""
+"""OpenAI-compatible Chat Completions via httpx (OpenRouter, OpenAI, Groq, …)."""
 
 from __future__ import annotations
 
@@ -12,7 +6,6 @@ import json
 from typing import Any, Dict, List, Optional, Set
 
 import httpx
-from openai import AsyncOpenAI
 
 from core.llm_types import LLMTurn, ToolCallRequest
 from core.providers.base import BaseLLMProvider
@@ -20,42 +13,7 @@ from utils.logging import get_logger
 
 log = get_logger("marianaos.llm.openai_compat")
 
-# Placeholder keys that must NOT be sent as Authorization (OpenCode free tier
-# returns 401 "Invalid API key" if Bearer opencode is present).
-_KEYLESS_PLACEHOLDERS: Set[str] = {
-    "",
-    "opencode",
-    "none",
-    "no-key",
-    "nokey",
-    "ollama",
-    "lm-studio",
-    "lmstudio",
-}
-
-
-def _should_strip_auth(api_key: str) -> bool:
-    return (api_key or "").strip().lower() in _KEYLESS_PLACEHOLDERS
-
-
-def _make_http_client(*, strip_auth: bool) -> httpx.AsyncClient:
-    if not strip_auth:
-        return httpx.AsyncClient()
-
-    async def _strip_placeholder_auth(request: httpx.Request) -> None:
-        auth = request.headers.get("Authorization") or request.headers.get("authorization")
-        if not auth:
-            return
-        token = auth.split(" ", 1)[-1].strip().lower()
-        if token in _KEYLESS_PLACEHOLDERS:
-            request.headers.pop("Authorization", None)
-            # httpx may store lower-case too depending on version
-            try:
-                del request.headers["authorization"]
-            except Exception:
-                pass
-
-    return httpx.AsyncClient(event_hooks={"request": [_strip_placeholder_auth]})
+_KEYLESS: Set[str] = {"", "none", "no-key", "nokey", "ollama", "lm-studio", "lmstudio"}
 
 
 class OpenAICompatProvider(BaseLLMProvider):
@@ -76,15 +34,36 @@ class OpenAICompatProvider(BaseLLMProvider):
         self.vision_model = vision_model
         self.max_tokens = max_tokens
         self.temperature = temperature
-        key = (api_key or "").strip() or "opencode"
-        strip_auth = provider_id == "opencode" and _should_strip_auth(key)
-        self._http = _make_http_client(strip_auth=strip_auth)
-        self.client = AsyncOpenAI(
-            api_key=key,
-            base_url=base_url,
-            default_headers=default_headers or None,
-            http_client=self._http,
-        )
+        self.base_url = base_url.rstrip("/")
+        self.api_key = (api_key or "").strip()
+        self.default_headers = dict(default_headers or {})
+
+    def _headers(self) -> Dict[str, str]:
+        headers = {
+            "Content-Type": "application/json",
+            **self.default_headers,
+        }
+        if self.api_key and self.api_key.lower() not in _KEYLESS:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    async def _post(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(url, headers=self._headers(), json=body)
+            if resp.status_code >= 400:
+                detail = resp.text[:800]
+                raise RuntimeError(f"LLM HTTP {resp.status_code}: {detail}")
+            return resp.json()
+
+    async def _get(self, path: str) -> Dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.get(url, headers=self._headers())
+            if resp.status_code >= 400:
+                detail = resp.text[:800]
+                raise RuntimeError(f"LLM HTTP {resp.status_code}: {detail}")
+            return resp.json()
 
     async def complete(
         self,
@@ -92,77 +71,67 @@ class OpenAICompatProvider(BaseLLMProvider):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: str = "auto",
     ) -> LLMTurn:
-        # Strip provider-private fields before sending to OpenAI-compatible APIs
-        clean_messages = [_strip_private(m) for m in messages]
-
-        kwargs: Dict[str, Any] = {
+        clean = [_strip_private(m) for m in messages]
+        body: Dict[str, Any] = {
             "model": self.model,
-            "messages": clean_messages,
+            "messages": clean,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
         if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = tool_choice
+            body["tools"] = tools
+            body["tool_choice"] = tool_choice
 
         try:
-            resp = await self.client.chat.completions.create(**kwargs)
-        except Exception as e:
+            data = await self._post("/chat/completions", body)
+        except RuntimeError as e:
             err = str(e).lower()
             if "max_tokens" in err and "max_completion_tokens" in err:
-                kwargs.pop("max_tokens", None)
-                kwargs["max_completion_tokens"] = self.max_tokens
-                resp = await self.client.chat.completions.create(**kwargs)
+                body.pop("max_tokens", None)
+                body["max_completion_tokens"] = self.max_tokens
+                data = await self._post("/chat/completions", body)
             else:
                 raise
 
-        msg = resp.choices[0].message
-        tool_calls_raw = msg.tool_calls or []
+        choice = (data.get("choices") or [{}])[0]
+        msg = choice.get("message") or {}
+        tool_calls_raw = msg.get("tool_calls") or []
         tool_calls: List[ToolCallRequest] = []
         assistant: Dict[str, Any] = {
             "role": "assistant",
-            "content": msg.content,
+            "content": msg.get("content"),
         }
 
-        # OpenCode / DeepSeek thinking models require reasoning_content echoed back
-        reasoning = getattr(msg, "reasoning_content", None)
-        if reasoning is None:
-            extra = getattr(msg, "model_extra", None) or {}
-            if isinstance(extra, dict):
-                reasoning = extra.get("reasoning_content")
+        reasoning = msg.get("reasoning_content")
         if reasoning:
             assistant["reasoning_content"] = reasoning
 
         if tool_calls_raw:
             serialized = []
             for tc in tool_calls_raw:
-                args: Dict[str, Any]
+                fn = tc.get("function") or {}
                 try:
-                    parsed = json.loads(tc.function.arguments or "{}")
+                    parsed = json.loads(fn.get("arguments") or "{}")
                     args = parsed if isinstance(parsed, dict) else {}
                 except json.JSONDecodeError:
                     args = {}
-                tool_calls.append(
-                    ToolCallRequest(
-                        id=tc.id,
-                        name=tc.function.name,
-                        arguments=args,
-                    )
-                )
+                tc_id = tc.get("id") or f"call_{len(tool_calls)}"
+                name = fn.get("name") or ""
+                tool_calls.append(ToolCallRequest(id=tc_id, name=name, arguments=args))
                 serialized.append(
                     {
-                        "id": tc.id,
+                        "id": tc_id,
                         "type": "function",
                         "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments or "{}",
+                            "name": name,
+                            "arguments": fn.get("arguments") or "{}",
                         },
                     }
                 )
             assistant["tool_calls"] = serialized
 
         return LLMTurn(
-            text=(msg.content or "").strip(),
+            text=(msg.get("content") or "").strip() if isinstance(msg.get("content"), str) else "",
             tool_calls=tool_calls,
             assistant_message=assistant,
         )
@@ -173,7 +142,7 @@ class OpenAICompatProvider(BaseLLMProvider):
         prompt: str,
         model: Optional[str] = None,
     ) -> str:
-        payload: Dict[str, Any] = {
+        body: Dict[str, Any] = {
             "model": model or self.vision_model,
             "max_tokens": min(self.max_tokens, 2000),
             "temperature": 0.1,
@@ -190,37 +159,18 @@ class OpenAICompatProvider(BaseLLMProvider):
                 }
             ],
         }
-        try:
-            resp = await self.client.chat.completions.create(**payload)
-        except Exception as e:
-            err = str(e).lower()
-            if "max_tokens" in err and "max_completion_tokens" in err:
-                payload.pop("max_tokens", None)
-                payload["max_completion_tokens"] = min(self.max_tokens, 2000)
-                resp = await self.client.chat.completions.create(**payload)
-            else:
-                raise
-        return (resp.choices[0].message.content or "").strip()
+        data = await self._post("/chat/completions", body)
+        choice = (data.get("choices") or [{}])[0]
+        msg = choice.get("message") or {}
+        content = msg.get("content") or ""
+        return content.strip() if isinstance(content, str) else str(content)
 
     async def list_models(self) -> List[str]:
-        page = await self.client.models.list()
-        rows = getattr(page, "data", None)
-        if rows is None:
-            # Some SDK versions are iterable; prefer .data when present
-            try:
-                rows = list(page)
-            except Exception:
-                rows = []
-        ids: List[str] = []
-        for m in rows:
-            mid = getattr(m, "id", None)
-            if mid:
-                ids.append(str(mid))
+        data = await self._get("/models")
+        rows = data.get("data") or []
+        ids = [str(m["id"]) for m in rows if isinstance(m, dict) and m.get("id")]
         return sorted(ids, key=str.lower)
 
 
 def _strip_private(message: Dict[str, Any]) -> Dict[str, Any]:
-    """Drop provider-private keys (_native, _tool_names, …) before OpenAI wire format."""
-    out = {k: v for k, v in message.items() if not k.startswith("_")}
-    # OpenAI tool role: name is optional; keep it when present
-    return out
+    return {k: v for k, v in message.items() if not k.startswith("_")}

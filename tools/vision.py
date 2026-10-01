@@ -70,5 +70,6 @@ class AnalyzeScreenshotTool(BaseTool):
             success=True,
             output=analysis,
             data={"path": str(p)},
-            media_paths=[str(p)],
+            # Do not auto-spam Telegram with every vision call
+            media_paths=[],
         )

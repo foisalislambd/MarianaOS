@@ -1,27 +1,19 @@
-"""Mouse and keyboard control tools."""
+"""Mouse and keyboard control via uiautomation."""
 
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Any, Optional
 
 from tools.base import BaseTool, ToolParam, ToolResult
-
-
-def _pyautogui():
-    import pyautogui
-
-    pyautogui.FAILSAFE = True
-    pyautogui.PAUSE = 0.05
-    return pyautogui
+from utils import win_ui
 
 
 class MouseClickTool(BaseTool):
     name = "mouse_click"
     description = (
         "Click the mouse at screen coordinates (x, y). "
-        "Take a screenshot first if you need to locate UI elements."
+        "Prefer click_control / get_ui_tree when the UI element name is known."
     )
     parameters = [
         ToolParam(name="x", type="integer", description="X coordinate in screen pixels."),
@@ -44,8 +36,7 @@ class MouseClickTool(BaseTool):
     async def execute(
         self, x: int, y: int, button: str = "left", clicks: int = 1, **_: Any
     ) -> ToolResult:
-        pg = _pyautogui()
-        pg.click(x=x, y=y, button=button, clicks=max(1, min(clicks, 3)))
+        win_ui.click_xy(int(x), int(y), button=button or "left", clicks=int(clicks or 1))
         return ToolResult(
             success=True,
             output=f"Clicked {button} x{clicks} at ({x}, {y})",
@@ -59,17 +50,10 @@ class MouseMoveTool(BaseTool):
     parameters = [
         ToolParam(name="x", type="integer", description="X coordinate."),
         ToolParam(name="y", type="integer", description="Y coordinate."),
-        ToolParam(
-            name="duration",
-            type="number",
-            description="Move duration in seconds (default 0.2).",
-            required=False,
-        ),
     ]
 
-    async def execute(self, x: int, y: int, duration: float = 0.2, **_: Any) -> ToolResult:
-        pg = _pyautogui()
-        pg.moveTo(x, y, duration=max(0.0, min(duration, 3.0)))
+    async def execute(self, x: int, y: int, **_: Any) -> ToolResult:
+        win_ui.move_mouse(int(x), int(y))
         return ToolResult(success=True, output=f"Moved mouse to ({x}, {y})")
 
 
@@ -85,64 +69,22 @@ class MouseScrollTool(BaseTool):
     async def execute(
         self, clicks: int, x: Optional[int] = None, y: Optional[int] = None, **_: Any
     ) -> ToolResult:
-        pg = _pyautogui()
-        if x is not None and y is not None:
-            pg.moveTo(x, y)
-        pg.scroll(clicks)
+        win_ui.scroll(int(clicks), x=x, y=y)
         return ToolResult(success=True, output=f"Scrolled {clicks}")
 
 
 class TypeTextTool(BaseTool):
     name = "type_text"
     description = (
-        "Type text with the keyboard into the currently focused window. "
-        "Prefer this for normal text; use hotkey for shortcuts."
+        "Type text into the currently focused window (clipboard paste). "
+        "Prefer set_control_value when targeting a named edit control."
     )
     parameters = [
         ToolParam(name="text", type="string", description="Text to type."),
-        ToolParam(
-            name="interval",
-            type="number",
-            description="Delay between keystrokes in seconds (default 0.02).",
-            required=False,
-        ),
-        ToolParam(
-            name="use_clipboard",
-            type="boolean",
-            description=(
-                "If true, paste via clipboard (better for Unicode / long text). Default true."
-            ),
-            required=False,
-        ),
     ]
 
-    async def execute(
-        self,
-        text: str,
-        interval: float = 0.02,
-        use_clipboard: bool = True,
-        **_: Any,
-    ) -> ToolResult:
-        pg = _pyautogui()
-        if use_clipboard:
-            import pyperclip
-
-            old = None
-            try:
-                old = pyperclip.paste()
-            except Exception:
-                pass
-            pyperclip.copy(text)
-            await asyncio.sleep(0.05)
-            pg.hotkey("ctrl", "v")
-            await asyncio.sleep(0.05)
-            if old is not None:
-                try:
-                    pyperclip.copy(old)
-                except Exception:
-                    pass
-        else:
-            pg.write(text, interval=max(0.0, min(interval, 0.2)))
+    async def execute(self, text: str, **_: Any) -> ToolResult:
+        win_ui.send_keys(text)
         return ToolResult(
             success=True,
             output=f"Typed {len(text)} characters",
@@ -153,15 +95,13 @@ class TypeTextTool(BaseTool):
 class HotkeyTool(BaseTool):
     name = "hotkey"
     description = (
-        "Press a keyboard shortcut, e.g. keys=['ctrl','s'] or keys=['alt','tab']. "
-        "Common: ctrl+l (Cursor/VS Code open file), ctrl+shift+p (command palette), "
-        "ctrl+k (Cursor chat), ctrl+, (settings)."
+        "Press a keyboard shortcut, e.g. keys=['ctrl','s'] or keys=['ctrl','shift','p']."
     )
     parameters = [
         ToolParam(
             name="keys",
             type="array",
-            description="List of keys to press together, e.g. [\"ctrl\", \"shift\", \"p\"].",
+            description='List of keys, e.g. ["ctrl", "shift", "p"].',
             items_type="string",
         ),
     ]
@@ -169,15 +109,14 @@ class HotkeyTool(BaseTool):
     async def execute(self, keys: list, **_: Any) -> ToolResult:
         if not keys or not isinstance(keys, list):
             return ToolResult(success=False, output="keys must be a non-empty list")
-        pg = _pyautogui()
         cleaned = [str(k).lower() for k in keys]
-        pg.hotkey(*cleaned)
+        win_ui.send_hotkey(*cleaned)
         return ToolResult(success=True, output=f"Pressed hotkey: {'+'.join(cleaned)}")
 
 
 class PressKeyTool(BaseTool):
     name = "press_key"
-    description = "Press a single key (enter, escape, tab, backspace, delete, up, down, left, right, f1-f12, etc.)."
+    description = "Press a single key (enter, escape, tab, backspace, delete, arrows, f1-f12…)."
     parameters = [
         ToolParam(name="key", type="string", description="Key name."),
         ToolParam(
@@ -189,11 +128,8 @@ class PressKeyTool(BaseTool):
     ]
 
     async def execute(self, key: str, times: int = 1, **_: Any) -> ToolResult:
-        pg = _pyautogui()
-        n = max(1, min(int(times), 20))
-        for _ in range(n):
-            pg.press(key)
-            time.sleep(0.03)
+        n = max(1, min(int(times or 1), 20))
+        win_ui.press_key(key, times=n)
         return ToolResult(success=True, output=f"Pressed '{key}' x{n}")
 
 
@@ -203,9 +139,8 @@ class GetMousePositionTool(BaseTool):
     parameters = []
 
     async def execute(self, **_: Any) -> ToolResult:
-        pg = _pyautogui()
-        x, y = pg.position()
-        w, h = pg.size()
+        x, y = win_ui.mouse_position()
+        w, h = win_ui.screen_size()
         return ToolResult(
             success=True,
             output=f"Mouse at ({x}, {y}); screen {w}x{h}",
@@ -217,11 +152,7 @@ class WaitTool(BaseTool):
     name = "wait"
     description = "Wait/sleep for a number of seconds (UI animations, app launches)."
     parameters = [
-        ToolParam(
-            name="seconds",
-            type="number",
-            description="Seconds to wait (max 30).",
-        ),
+        ToolParam(name="seconds", type="number", description="Seconds to wait (max 30)."),
     ]
 
     async def execute(self, seconds: float = 1.0, **_: Any) -> ToolResult:

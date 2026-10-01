@@ -1,4 +1,4 @@
-"""Screenshot capture tools."""
+"""Screenshot capture (Pillow) — use sparingly; prefer get_ui_tree / click_control."""
 
 from __future__ import annotations
 
@@ -12,17 +12,11 @@ from tools.base import BaseTool, ToolParam, ToolResult
 class TakeScreenshotTool(BaseTool):
     name = "take_screenshot"
     description = (
-        "Capture a screenshot of the desktop (or a specific monitor / region). "
-        "Returns the saved file path. Use this to see the current screen before acting, "
-        "and again after finishing a task so the user can verify."
+        "Capture a screenshot (only when the user asks, or when UI Automation cannot "
+        "see the needed visual content). Prefer get_ui_tree / find_control / click_control "
+        "for normal UI work. Returns the saved file path."
     )
     parameters = [
-        ToolParam(
-            name="monitor",
-            type="integer",
-            description="Monitor index (1 = primary). 0 = all monitors stitched. Default 1.",
-            required=False,
-        ),
         ToolParam(
             name="region",
             type="string",
@@ -35,7 +29,16 @@ class TakeScreenshotTool(BaseTool):
         ToolParam(
             name="label",
             type="string",
-            description="Optional short label for the filename (e.g. 'before', 'after', 'cursor').",
+            description="Optional short label for the filename.",
+            required=False,
+        ),
+        ToolParam(
+            name="send_to_user",
+            type="boolean",
+            description=(
+                "If true, attach image to Telegram reply. Default false — "
+                "only set true when the user asked for a screenshot or final proof."
+            ),
             required=False,
         ),
     ]
@@ -46,42 +49,37 @@ class TakeScreenshotTool(BaseTool):
 
     async def execute(
         self,
-        monitor: int = 1,
         region: Optional[str] = None,
         label: Optional[str] = None,
+        send_to_user: bool = False,
         **_: Any,
     ) -> ToolResult:
-        import mss
-        from PIL import Image
+        from PIL import ImageGrab
 
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         tag = f"_{label}" if label else ""
         out_path = self.screenshot_dir / f"shot_{stamp}{tag}.png"
 
-        with mss.mss() as sct:
-            if region:
-                parts = [int(x.strip()) for x in region.split(",")]
-                if len(parts) != 4:
-                    return ToolResult(
-                        success=False,
-                        output="region must be 'left,top,width,height'",
-                    )
-                left, top, width, height = parts
-                mon = {"left": left, "top": top, "width": width, "height": height}
-            else:
-                monitors = sct.monitors
-                idx = max(0, min(monitor, len(monitors) - 1))
-                mon = monitors[idx]
+        bbox = None
+        if region:
+            parts = [int(x.strip()) for x in region.split(",")]
+            if len(parts) != 4:
+                return ToolResult(
+                    success=False,
+                    output="region must be 'left,top,width,height'",
+                )
+            left, top, width, height = parts
+            bbox = (left, top, left + width, top + height)
 
-            raw = sct.grab(mon)
-            img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
-            img.save(out_path, "PNG")
+        img = ImageGrab.grab(bbox=bbox, all_screens=True)
+        img.save(out_path, "PNG")
 
+        media = [str(out_path)] if send_to_user else []
         return ToolResult(
             success=True,
             output=f"Screenshot saved: {out_path}",
             data={"path": str(out_path), "size": list(img.size)},
-            media_paths=[str(out_path)],
+            media_paths=media,
         )
 
 

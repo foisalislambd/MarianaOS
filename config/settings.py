@@ -1,71 +1,103 @@
-"""Application settings loaded from environment / .env."""
+"""Application settings loaded from environment / .env (python-dotenv)."""
 
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from typing import List
 
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
 
 from config.providers import ResolvedLLM, list_providers, resolve_llm
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT_DIR / ".env")
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=str(ROOT_DIR / ".env"),
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+def _env(key: str, default: str = "") -> str:
+    return (os.getenv(key) or default).strip()
 
-    # LLM — set LLM_PROVIDER to auto-fill base URL + default models
-    llm_provider: str = Field("openai", alias="LLM_PROVIDER")
-    llm_api_key: str = Field("", alias="LLM_API_KEY")
-    # Optional overrides (leave empty to use provider defaults)
-    llm_base_url: str = Field("", alias="LLM_BASE_URL")
-    llm_model: str = Field("", alias="LLM_MODEL")
-    llm_vision_model: str = Field("", alias="LLM_VISION_MODEL")
-    llm_max_tokens: int = Field(4096, alias="LLM_MAX_TOKENS")
-    llm_temperature: float = Field(0.2, alias="LLM_TEMPERATURE")
 
-    # Telegram
-    telegram_bot_token: str = Field(..., alias="TELEGRAM_BOT_TOKEN")
-    telegram_allowed_users: str = Field("", alias="TELEGRAM_ALLOWED_USERS")
+def _env_int(key: str, default: int) -> int:
+    raw = _env(key)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 
-    # Agent
-    agent_name: str = Field("MarianaOS", alias="AGENT_NAME")
-    agent_max_tool_rounds: int = Field(25, alias="AGENT_MAX_TOOL_ROUNDS")
-    agent_screenshot_dir: str = Field("data/screenshots", alias="AGENT_SCREENSHOT_DIR")
-    agent_workspace: str = Field(str(Path.home() / "Desktop"), alias="AGENT_WORKSPACE")
-    cursor_path: str = Field("", alias="CURSOR_PATH")
-    require_confirmation: bool = Field(False, alias="REQUIRE_CONFIRMATION")
 
-    # Tool discovery — only send core tool schemas to the LLM (saves tokens).
-    # Agent must call search_tools(query) to unlock more tools for that run.
-    tool_discovery: bool = Field(True, alias="TOOL_DISCOVERY")
-    # Comma-separated core tool names (empty = built-in default set)
-    tool_core: str = Field("", alias="TOOL_CORE")
+def _env_float(key: str, default: float) -> float:
+    raw = _env(key)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
 
-    # Logging
-    log_level: str = Field("INFO", alias="LOG_LEVEL")
 
-    @field_validator("telegram_allowed_users", mode="before")
+def _env_bool(key: str, default: bool = False) -> bool:
+    raw = _env(key).lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+@dataclass
+class Settings:
+    llm_provider: str
+    llm_api_key: str
+    llm_base_url: str
+    llm_model: str
+    llm_vision_model: str
+    llm_max_tokens: int
+    llm_temperature: float
+    telegram_bot_token: str
+    telegram_allowed_users: str
+    agent_name: str
+    agent_max_tool_rounds: int
+    agent_screenshot_dir: str
+    agent_workspace: str
+    cursor_path: str
+    require_confirmation: bool
+    tool_discovery: bool
+    tool_core: str
+    log_level: str
+
     @classmethod
-    def _coerce_users(cls, v: object) -> str:
-        if v is None:
-            return ""
-        return str(v)
-
-    @field_validator("llm_provider", mode="before")
-    @classmethod
-    def _coerce_provider(cls, v: object) -> str:
-        if v is None or str(v).strip() == "":
-            return "openai"
-        return str(v).strip()
+    def load(cls) -> "Settings":
+        token = _env("TELEGRAM_BOT_TOKEN")
+        if not token or token.startswith("your_"):
+            raise ValueError(
+                "TELEGRAM_BOT_TOKEN is required. Copy .env.example → .env and fill it in."
+            )
+        return cls(
+            llm_provider=_env("LLM_PROVIDER", "openrouter") or "openrouter",
+            llm_api_key=_env("LLM_API_KEY"),
+            llm_base_url=_env("LLM_BASE_URL"),
+            llm_model=_env("LLM_MODEL"),
+            llm_vision_model=_env("LLM_VISION_MODEL"),
+            llm_max_tokens=_env_int("LLM_MAX_TOKENS", 4096),
+            llm_temperature=_env_float("LLM_TEMPERATURE", 0.2),
+            telegram_bot_token=token,
+            telegram_allowed_users=_env("TELEGRAM_ALLOWED_USERS"),
+            agent_name=_env("AGENT_NAME", "MarianaOS") or "MarianaOS",
+            agent_max_tool_rounds=_env_int("AGENT_MAX_TOOL_ROUNDS", 25),
+            agent_screenshot_dir=_env("AGENT_SCREENSHOT_DIR", "data/screenshots")
+            or "data/screenshots",
+            agent_workspace=_env("AGENT_WORKSPACE")
+            or str(Path.home() / "Desktop"),
+            cursor_path=_env("CURSOR_PATH"),
+            require_confirmation=_env_bool("REQUIRE_CONFIRMATION", False),
+            tool_discovery=_env_bool("TOOL_DISCOVERY", True),
+            tool_core=_env("TOOL_CORE"),
+            log_level=_env("LOG_LEVEL", "INFO") or "INFO",
+        )
 
     @cached_property
     def llm(self) -> ResolvedLLM:
@@ -79,7 +111,7 @@ class Settings(BaseSettings):
 
     @property
     def allowed_user_ids(self) -> List[int]:
-        if not self.telegram_allowed_users.strip():
+        if not self.telegram_allowed_users:
             return []
         return [
             int(x.strip())
@@ -106,13 +138,14 @@ _settings: Settings | None = None
 def get_settings() -> Settings:
     global _settings
     if _settings is None:
-        _settings = Settings()  # type: ignore[call-arg]
+        _settings = Settings.load()
     return _settings
 
 
 def reload_settings() -> Settings:
     global _settings
-    _settings = Settings()  # type: ignore[call-arg]
+    load_dotenv(ROOT_DIR / ".env", override=True)
+    _settings = Settings.load()
     return _settings
 
 

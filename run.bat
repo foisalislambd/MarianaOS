@@ -27,13 +27,15 @@ if not exist "%VENV_PY%" (
 echo [2/3] Using venv Python...
 if not exist "%VENV_PY%" goto :venv_fail
 
-"%VENV_PY%" -c "import google.genai" >nul 2>&1
+"%VENV_PY%" -c "import aiogram" >nul 2>&1
 if errorlevel 1 set "NEED_INSTALL=1"
-"%VENV_PY%" -c "import anthropic" >nul 2>&1
+"%VENV_PY%" -c "import httpx" >nul 2>&1
 if errorlevel 1 set "NEED_INSTALL=1"
-"%VENV_PY%" -c "import telegram" >nul 2>&1
+"%VENV_PY%" -c "import uiautomation" >nul 2>&1
 if errorlevel 1 set "NEED_INSTALL=1"
-"%VENV_PY%" -c "import openai" >nul 2>&1
+"%VENV_PY%" -c "import PIL" >nul 2>&1
+if errorlevel 1 set "NEED_INSTALL=1"
+"%VENV_PY%" -c "import dotenv" >nul 2>&1
 if errorlevel 1 set "NEED_INSTALL=1"
 
 if "!NEED_INSTALL!"=="1" (

@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""List all model IDs for a given LLM provider (for LLM_MODEL / LLM_VISION_MODEL).
-
-Uses each provider's native SDK where available (Gemini, Anthropic),
-otherwise the OpenAI-compatible models.list endpoint.
+"""List model IDs for OpenAI-compatible providers (httpx).
 
 Usage:
   python list_models.py
-  python list_models.py gemini
+  python list_models.py openrouter
   python list_models.py openrouter --filter claude
   python list_models.py --list
 """
@@ -26,20 +23,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from dotenv import load_dotenv
-from rich.console import Console
-from rich.table import Table
 
 from config.providers import (
-    is_opencode_free_model,
     list_providers,
     normalize_provider,
     provider_allows_empty_key,
     resolve_llm,
-    OPENCODE_VISION_MODELS,
 )
 from core.providers.factory import create_llm_provider
 
-console = Console()
 load_dotenv(ROOT / ".env")
 
 
@@ -48,7 +40,7 @@ def _env_key() -> str:
 
 
 def _env_provider() -> str:
-    return (os.getenv("LLM_PROVIDER") or "openai").strip()
+    return (os.getenv("LLM_PROVIDER") or "openrouter").strip()
 
 
 def _env_base_url() -> str:
@@ -56,24 +48,13 @@ def _env_base_url() -> str:
 
 
 def show_providers() -> None:
-    table = Table(title="Supported providers", show_lines=False)
-    table.add_column("ID", style="cyan", no_wrap=True)
-    table.add_column("Name", style="green")
-    table.add_column("SDK / API", style="magenta")
-    table.add_column("Default model", style="yellow")
+    print("Supported providers (OpenAI-compatible via httpx):\n")
     for p in list_providers():
-        if p.id == "gemini":
-            sdk = "native google-genai"
-        elif p.id == "anthropic":
-            sdk = "native anthropic"
-        else:
-            sdk = "OpenAI-compatible"
-        table.add_row(p.id, p.name, sdk, p.default_model)
-    console.print(table)
-    console.print(
-        "\n[dim]Example:[/] python list_models.py gemini\n"
-        "[dim]Then set in .env:[/] LLM_MODEL=<model-id>"
-    )
+        print(f"  {p.id:18}  {p.name:28}  default={p.default_model}")
+        if p.notes:
+            print(f"    {p.notes}")
+    print("\nExample: python list_models.py openrouter --filter gemini")
+    print("Then set in .env: LLM_MODEL=<model-id>")
 
 
 async def fetch_models(
@@ -108,56 +89,26 @@ def print_models(
         )
         return
 
-    console.print(
-        f"[bold]{resolved.provider_name}[/] ([cyan]{resolved.provider_id}[/])\n"
-        f"[dim]{resolved.notes}[/]\n"
-        f"Models: [bold green]{len(models)}[/]"
-        + (f"  filter=[yellow]{filt}[/]" if filt else "")
-    )
-
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("#", style="dim", width=5, justify="right")
-    table.add_column("Model ID", style="cyan")
-    if resolved.provider_id == "opencode":
-        table.add_column("Tier", style="green", width=8)
-        table.add_column("Vision", style="magenta", width=8)
-
+    print(f"{resolved.provider_name} ({resolved.provider_id})")
+    if resolved.notes:
+        print(resolved.notes)
+    print(f"Models: {len(models)}" + (f"  filter={filt}" if filt else ""))
+    print("-" * 60)
     defaults = {resolved.model, resolved.vision_model}
-    vision_set = set(OPENCODE_VISION_MODELS)
     for i, m in enumerate(models, 1):
         mid = str(m["id"])
-        style = "bold yellow" if mid in defaults else "cyan"
-        if resolved.provider_id == "opencode":
-            tier = "FREE" if is_opencode_free_model(mid) else "paid"
-            vision = "yes" if mid in vision_set else "-"
-            table.add_row(str(i), f"[{style}]{mid}[/{style}]", tier, vision)
-        else:
-            table.add_row(str(i), f"[{style}]{mid}[/{style}]")
-
-    console.print(table)
-    if resolved.provider_id == "opencode":
-        console.print(
-            "\n[green]FREE[/] = no API key (ids ending in -free, plus big-pickle). "
-            "[magenta]Vision=yes[/] = screenshot-capable free models "
-            f"({', '.join(OPENCODE_VISION_MODELS)})."
-        )
-    console.print(
-        "\n[bold]Copy into .env:[/]\n"
-        f"  LLM_PROVIDER={resolved.provider_id}\n"
-        f"  LLM_MODEL=<paste-model-id>\n"
-        f"  LLM_VISION_MODEL=<paste-vision-model-id>"
-        + (
-            "\n  LLM_API_KEY=opencode"
-            if resolved.provider_id == "opencode"
-            else ""
-        )
-    )
+        mark = " *" if mid in defaults else ""
+        print(f"{i:4}. {mid}{mark}")
+    print("-" * 60)
+    print("Copy into .env:")
+    print(f"  LLM_PROVIDER={resolved.provider_id}")
+    print("  LLM_MODEL=<paste-model-id>")
+    print("  LLM_VISION_MODEL=<paste-vision-model-id>")
+    print("  LLM_API_KEY=<your-key>")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Fetch model IDs from an LLM provider (native SDK when available)",
-    )
+    parser = argparse.ArgumentParser(description="Fetch model IDs via httpx")
     parser.add_argument("provider", nargs="?", default=None)
     parser.add_argument("--list", "-l", action="store_true")
     parser.add_argument("--key", "-k", default="")
@@ -177,21 +128,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     if (not api_key or api_key.startswith("your_")) and not provider_allows_empty_key(
         provider
     ):
-        console.print("[red]Missing API key.[/] Set LLM_API_KEY in .env or pass --key")
+        print("Missing API key. Set LLM_API_KEY in .env or pass --key")
         show_providers()
         return 1
     if not api_key:
-        api_key = "opencode"
+        api_key = provider
 
-    console.print(f"[dim]Fetching models from[/] [cyan]{provider}[/] …")
+    print(f"Fetching models from {provider} …")
     try:
         models = asyncio.run(fetch_models(provider, api_key, base_url=base_url))
     except Exception as e:
-        console.print(f"[red]Failed to list models:[/] {e}")
+        print(f"Failed to list models: {e}")
         return 2
 
     if not models:
-        console.print("[yellow]No models returned.[/]")
+        print("No models returned.")
         return 3
 
     print_models(provider, models, filt=args.filter, as_json=args.json, base_url=base_url)

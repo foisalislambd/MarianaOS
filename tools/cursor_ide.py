@@ -1,4 +1,4 @@
-"""Cursor IDE tools — prefer Python/state.vscdb; UI only when necessary.
+"""Cursor IDE tools — prefer Python/state.vscdb; UI via uiautomation when needed.
 
 Python (no clicking):
   cursor_get_model, cursor_list_models, cursor_select_model, cursor_set_effort,
@@ -15,68 +15,31 @@ import asyncio
 from typing import Any, Optional
 
 from tools.base import BaseTool, ToolParam, ToolResult
-
-
-def _pg():
-    import pyautogui
-
-    pyautogui.FAILSAFE = True
-    return pyautogui
-
-
-async def _cursor_window():
-    import pygetwindow as gw
-
-    matches = [
-        w for w in gw.getAllWindows() if w.title and "cursor" in w.title.lower()
-    ]
-    if not matches:
-        return None
-    win = matches[0]
-    try:
-        if win.isMinimized:
-            win.restore()
-        win.activate()
-    except Exception:
-        try:
-            import win32con
-            import win32gui
-
-            hwnd = win32gui.FindWindow(None, win.title)
-            if hwnd:
-                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                win32gui.SetForegroundWindow(hwnd)
-        except Exception:
-            return None
-    await asyncio.sleep(0.35)
-    return win
+from utils import win_ui
 
 
 async def _focus_cursor() -> Optional[str]:
-    win = await _cursor_window()
-    return win.title if win else None
+    ok, title = win_ui.focus_window("Cursor", timeout=3.0)
+    if not ok:
+        return None
+    await asyncio.sleep(0.35)
+    return title
 
 
 async def _paste(text: str) -> None:
-    import pyperclip
-
-    pg = _pg()
-    pyperclip.copy(text)
-    await asyncio.sleep(0.05)
-    pg.hotkey("ctrl", "v")
+    win_ui.send_keys(text)
     await asyncio.sleep(0.15)
 
 
 async def _palette(command: str, submit: bool = True) -> None:
-    pg = _pg()
-    pg.hotkey("ctrl", "shift", "p")
+    win_ui.send_hotkey("ctrl", "shift", "p")
     await asyncio.sleep(0.45)
-    pg.hotkey("ctrl", "a")
+    win_ui.send_hotkey("ctrl", "a")
     await asyncio.sleep(0.05)
     await _paste(command)
     await asyncio.sleep(0.35)
     if submit:
-        pg.press("enter")
+        win_ui.press_key("enter")
         await asyncio.sleep(0.4)
 
 
@@ -412,8 +375,7 @@ class CursorCommandPaletteTool(BaseTool):
                 output=f"Ran command palette: {command}",
                 data={"window": title, "command": command},
             )
-        pg = _pg()
-        pg.hotkey("ctrl", "shift", "p")
+        win_ui.send_hotkey("ctrl", "shift", "p")
         await asyncio.sleep(0.3)
         return ToolResult(success=True, output=f"Opened command palette on '{title}'")
 
@@ -439,13 +401,12 @@ class CursorOpenChatTool(BaseTool):
         title = await _focus_cursor()
         if not title:
             return ToolResult(success=False, output="Cursor window not found.")
-        pg = _pg()
-        pg.press("escape")
+        win_ui.press_key("escape")
         await asyncio.sleep(0.1)
         if mode == "composer":
-            pg.hotkey("ctrl", "i")
+            win_ui.send_hotkey("ctrl", "i")
         else:
-            pg.hotkey("ctrl", "l")
+            win_ui.send_hotkey("ctrl", "l")
         await asyncio.sleep(0.45)
         return ToolResult(
             success=True,
@@ -464,8 +425,7 @@ class CursorNewChatTool(BaseTool):
         title = await _focus_cursor()
         if not title:
             return ToolResult(success=False, output="Cursor window not found.")
-        pg = _pg()
-        pg.hotkey("ctrl", "l")
+        win_ui.send_hotkey("ctrl", "l")
         await asyncio.sleep(0.3)
         await _palette("Chat: New Chat", submit=True)
         await asyncio.sleep(0.25)
@@ -510,16 +470,15 @@ class CursorTypeInChatTool(BaseTool):
         title = await _focus_cursor()
         if not title:
             return ToolResult(success=False, output="Cursor window not found.")
-        pg = _pg()
         if mode == "composer":
-            pg.hotkey("ctrl", "i")
+            win_ui.send_hotkey("ctrl", "i")
         else:
-            pg.hotkey("ctrl", "l")
+            win_ui.send_hotkey("ctrl", "l")
         await asyncio.sleep(0.45)
         await _paste(text)
         await asyncio.sleep(0.2)
         if submit:
-            pg.press("enter")
+            win_ui.press_key("enter")
         return ToolResult(
             success=True,
             output=f"Typed into Cursor {mode}" + (" and submitted" if submit else ""),
@@ -549,13 +508,12 @@ class CursorAddContextTool(BaseTool):
         title = await _focus_cursor()
         if not title:
             return ToolResult(success=False, output="Cursor window not found.")
-        pg = _pg()
-        pg.hotkey("ctrl", "l")
+        win_ui.send_hotkey("ctrl", "l")
         await asyncio.sleep(0.4)
         await _paste("@" + query)
         await asyncio.sleep(0.45)
         if confirm:
-            pg.press("enter")
+            win_ui.press_key("enter")
             await asyncio.sleep(0.25)
         return ToolResult(
             success=True,
