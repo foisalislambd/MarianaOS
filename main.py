@@ -66,13 +66,16 @@ async def main() -> None:
             return OutboundMessage(text="")
 
         on_progress = None
+        cancel_event = None
         if isinstance(msg.raw, dict):
             on_progress = msg.raw.get("on_progress")
+            cancel_event = msg.raw.get("cancel_event")
 
         result = await agent.run(
             session_id=msg.session_id,
             user_text=msg.text,
             on_progress=on_progress,
+            cancel_event=cancel_event,
         )
 
         media = result.media_paths[-3:] if result.media_paths else []

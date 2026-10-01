@@ -1,16 +1,23 @@
-"""Telegram bot channel — aiogram 3.x with Rich Message Markdown."""
+"""Telegram bot channel — aiogram 3.x with Rich Message Markdown + Stop button."""
 
 from __future__ import annotations
 
-import time
+import asyncio
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import Dict, List, Optional, Set
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ChatAction, ParseMode
 from aiogram.filters import Command
-from aiogram.types import BufferedInputFile, InputRichMessage, Message
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputRichMessage,
+    Message,
+)
 
 from channels.base import BaseChannel, InboundMessage, OutboundMessage
 from utils.logging import get_logger
@@ -24,6 +31,16 @@ from utils.telegram_format import (
 
 log = get_logger("marianaos.telegram")
 
+STOP_CALLBACK = "stop_task"
+
+
+def _stop_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⏹ Stop", callback_data=STOP_CALLBACK)]
+        ]
+    )
+
 
 class TelegramChannel(BaseChannel):
     name = "telegram"
@@ -36,6 +53,8 @@ class TelegramChannel(BaseChannel):
         self.dp: Optional[Dispatcher] = None
         self._busy: Set[int] = set()
         self._polling_task = None
+        self._cancel_events: Dict[int, asyncio.Event] = {}
+        self._run_tasks: Dict[int, asyncio.Task] = {}
 
     def _authorized(self, user_id: int) -> bool:
         if not self.allowed:
@@ -44,8 +63,6 @@ class TelegramChannel(BaseChannel):
         return user_id in self.allowed
 
     async def start(self) -> None:
-        import asyncio
-
         self.bot = Bot(
             token=self.token,
             default=DefaultBotProperties(parse_mode=None),
@@ -57,6 +74,9 @@ class TelegramChannel(BaseChannel):
         self.dp.message.register(self._cmd_id, Command("id"))
         self.dp.message.register(self._on_photo, F.photo)
         self.dp.message.register(self._on_text, F.text)
+        self.dp.callback_query.register(
+            self._on_stop_callback, F.data == STOP_CALLBACK
+        )
 
         me = await self.bot.get_me()
         log.info("Telegram bot online as @%s", me.username)
@@ -66,6 +86,13 @@ class TelegramChannel(BaseChannel):
         )
 
     async def stop(self) -> None:
+        # Cancel any in-flight user tasks
+        for uid, task in list(self._run_tasks.items()):
+            ev = self._cancel_events.get(uid)
+            if ev:
+                ev.set()
+            if task and not task.done():
+                task.cancel()
         if self.dp:
             await self.dp.stop_polling()
         if self._polling_task:
@@ -98,7 +125,6 @@ class TelegramChannel(BaseChannel):
                     log.warning("Failed to send photo %s: %s", path, e)
 
     async def _send_rich_markdown(self, chat_id: int, text: str) -> None:
-        """Prefer sendRichMessage(markdown=…); fall back to HTML sendMessage."""
         assert self.bot is not None
         md = normalize_llm_markdown(text)
         if not md:
@@ -127,22 +153,6 @@ class TelegramChannel(BaseChannel):
                     log.warning("HTML send failed (%s) — plain", e2)
                     await self.bot.send_message(chat_id=chat_id, text=hchunk)
 
-    async def _send_draft(self, chat_id: int, draft_id: int, markdown: str) -> bool:
-        assert self.bot is not None
-        try:
-            await self.bot.send_rich_message_draft(
-                chat_id=chat_id,
-                draft_id=draft_id,
-                rich_message=InputRichMessage(
-                    markdown=normalize_llm_markdown(markdown) or "…"
-                ),
-                can_stop=False,
-            )
-            return True
-        except Exception as e:
-            log.debug("rich draft failed: %s", e)
-            return False
-
     async def _cmd_start(self, message: Message) -> None:
         user = message.from_user
         if not user:
@@ -167,6 +177,8 @@ I can operate this Windows PC for you — apps, files, Cursor IDE, UI controls, 
 - `What windows are open right now?`
 - `Take a screenshot` *(only when you ask)*
 
+While a task is running, tap **⏹ Stop** to cancel it.
+
 ## Commands
 /help · /reset · /id""",
         )
@@ -188,13 +200,14 @@ I can operate this Windows PC for you — apps, files, Cursor IDE, UI controls, 
 - `/reset` — clear conversation memory
 - `/id` — your Telegram user id
 
-## What I do well
-- **UI Automation** — find buttons/fields by name, click, type (not blind screenshots)
-- **Cursor IDE** — change model / open chats via Python (`state.vscdb`)
-- **Files & shell** — read/write/search, PowerShell when needed
-- **Apps & windows** — launch, focus, list
+## Stop a running task
+While I am working, the progress message shows an **⏹ Stop** button — tap it to cancel.
 
-Speak naturally. I'll plan, act, and confirm what I did.""",
+## What I do well
+- **UI Automation** — find buttons/fields by name, click, type
+- **Cursor IDE** — change model / open chats via Python
+- **Files & shell** — read/write/search, PowerShell when needed
+- **Apps & windows** — launch, focus, list""",
         )
 
     async def _cmd_id(self, message: Message) -> None:
@@ -221,6 +234,36 @@ Speak naturally. I'll plan, act, and confirm what I did.""",
             )
             await self._handler(inbound)
         await self._send_rich_markdown(user.id, "Memory cleared. Fresh start.")
+
+    async def _on_stop_callback(self, callback: CallbackQuery) -> None:
+        user = callback.from_user
+        if not user:
+            return
+        if not self._authorized(user.id):
+            await callback.answer("Unauthorized", show_alert=True)
+            return
+
+        ev = self._cancel_events.get(user.id)
+        task = self._run_tasks.get(user.id)
+        if not ev and not task:
+            await callback.answer("Nothing is running.")
+            return
+
+        if ev:
+            ev.set()
+        if task and not task.done():
+            task.cancel()
+
+        try:
+            if callback.message:
+                await callback.message.edit_text(
+                    "⏹ Stopping…",
+                    reply_markup=None,
+                )
+        except Exception:
+            pass
+        await callback.answer("Stopping task…")
+        log.info("User %s requested stop", user.id)
 
     async def _on_photo(self, message: Message) -> None:
         user = message.from_user
@@ -254,7 +297,9 @@ Speak naturally. I'll plan, act, and confirm what I did.""",
             return
         if user.id in self._busy:
             await self._send_rich_markdown(
-                user.id, "Still working on your previous request — one moment."
+                user.id,
+                "Still working on your previous request.\n\n"
+                "Tap **⏹ Stop** on that progress message to cancel it.",
             )
             return
         if not self._handler:
@@ -262,27 +307,27 @@ Speak naturally. I'll plan, act, and confirm what I did.""",
             return
 
         self._busy.add(user.id)
-        draft_id = int(time.time() * 1000) % 2_000_000_000 + (user.id % 1000)
-        use_draft = await self._send_draft(
-            user.id,
-            draft_id,
-            "## Working\n\nUnderstanding your request…",
+        cancel_event = asyncio.Event()
+        self._cancel_events[user.id] = cancel_event
+
+        status_msg = await message.answer(
+            "🔄 Working…\n\nUnderstanding your request…",
+            reply_markup=_stop_keyboard(),
         )
-        status_msg: Optional[Message] = None
-        if not use_draft:
-            status_msg = await message.answer("Working…")
 
         async def on_progress(status_text: str) -> None:
+            if cancel_event.is_set():
+                return
             try:
                 assert self.bot is not None
                 await self.bot.send_chat_action(
                     chat_id=user.id, action=ChatAction.TYPING
                 )
-                body = f"## Working\n\n{status_text}"
-                if use_draft:
-                    await self._send_draft(user.id, draft_id, body)
-                elif status_msg is not None:
-                    await status_msg.edit_text(status_text[:200])
+                body = f"🔄 Working…\n\n{status_text}"
+                await status_msg.edit_text(
+                    body[:500],
+                    reply_markup=_stop_keyboard(),
+                )
             except Exception:
                 pass
 
@@ -292,20 +337,48 @@ Speak naturally. I'll plan, act, and confirm what I did.""",
             session_id=f"tg:{user.id}",
             text=text,
             display_name=user.full_name or "",
-            raw={"message": message, "on_progress": on_progress},
+            raw={
+                "message": message,
+                "on_progress": on_progress,
+                "cancel_event": cancel_event,
+            },
         )
 
+        run_task = asyncio.create_task(self._handler(inbound))
+        self._run_tasks[user.id] = run_task
+
         try:
-            outbound = await self._handler(inbound)
-            if status_msg is not None:
+            outbound = await run_task
+        except asyncio.CancelledError:
+            try:
+                await status_msg.edit_text("⏹ Stopped", reply_markup=None)
+            except Exception:
+                pass
+            await self._send_rich_markdown(
+                user.id, "## Stopped\n\nTask stopped by you."
+            )
+        except Exception as e:
+            log.exception("Handler error")
+            try:
+                await status_msg.edit_text("❌ Error", reply_markup=None)
+            except Exception:
+                pass
+            await self._send_rich_markdown(user.id, f"## Error\n\n`{e}`")
+        else:
+            was_stopped = cancel_event.is_set()
+            try:
+                await status_msg.edit_text(
+                    "⏹ Stopped" if was_stopped else "✅ Done",
+                    reply_markup=None,
+                )
+            except Exception:
                 try:
                     await status_msg.delete()
                 except Exception:
                     pass
-            # Final rich reply (draft stream is replaced / superseded by final message)
-            await self.send(str(user.id), outbound)
-        except Exception as e:
-            log.exception("Handler error")
-            await self._send_rich_markdown(user.id, f"## Error\n\n`{e}`")
+            if outbound and (outbound.text or outbound.media_paths):
+                await self.send(str(user.id), outbound)
         finally:
             self._busy.discard(user.id)
+            self._cancel_events.pop(user.id, None)
+            self._run_tasks.pop(user.id, None)

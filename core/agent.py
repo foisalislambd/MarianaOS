@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -150,11 +151,15 @@ class Agent:
                 unique_media.append(m)
         return AgentResponse(text=user_text, media_paths=unique_media, tool_trace=trace)
 
+    def _cancelled(self, cancel_event: Optional[asyncio.Event]) -> bool:
+        return bool(cancel_event and cancel_event.is_set())
+
     async def run(
         self,
         session_id: str,
         user_text: str,
         on_progress: Optional[ProgressCallback] = None,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> AgentResponse:
         self.tools.reset_session()
         self.memory.add(session_id, {"role": "user", "content": user_text})
@@ -166,6 +171,14 @@ class Agent:
         consecutive_fails = 0
 
         for round_i in range(self.settings.agent_max_tool_rounds):
+            if self._cancelled(cancel_event):
+                return self._finish(
+                    session_id,
+                    "## Stopped\n\nTask stopped by you.",
+                    all_media,
+                    trace,
+                )
+
             log.info(
                 "Agent round %s/%s (tools=%s)",
                 round_i + 1,
@@ -177,11 +190,26 @@ class Agent:
                     messages=messages,
                     tools=self.tools.openai_tools(),
                 )
+            except asyncio.CancelledError:
+                return self._finish(
+                    session_id,
+                    "## Stopped\n\nTask stopped by you.",
+                    all_media,
+                    trace,
+                )
             except Exception as e:
                 log.exception("LLM error")
                 return self._finish(
                     session_id,
                     f"## LLM error\n\n`{e}`",
+                    all_media,
+                    trace,
+                )
+
+            if self._cancelled(cancel_event):
+                return self._finish(
+                    session_id,
+                    "## Stopped\n\nTask stopped by you.",
                     all_media,
                     trace,
                 )
@@ -193,15 +221,31 @@ class Agent:
                 break
 
             for tc in turn.tool_calls:
+                if self._cancelled(cancel_event):
+                    return self._finish(
+                        session_id,
+                        "## Stopped\n\nTask stopped by you.",
+                        all_media,
+                        trace,
+                    )
+
                 if on_progress:
                     await on_progress(f"`{tc.name}`…")
 
                 log.info("Tool call: %s(%s)", tc.name, tc.arguments)
-                result: ToolResult = await self.tools.call(
-                    tc.name,
-                    tc.arguments,
-                    require_confirmation=self.settings.require_confirmation,
-                )
+                try:
+                    result: ToolResult = await self.tools.call(
+                        tc.name,
+                        tc.arguments,
+                        require_confirmation=self.settings.require_confirmation,
+                    )
+                except asyncio.CancelledError:
+                    return self._finish(
+                        session_id,
+                        "## Stopped\n\nTask stopped by you.",
+                        all_media,
+                        trace,
+                    )
                 status = "ok" if result.success else "fail"
                 trace.append(f"{tc.name}: {status}")
 
@@ -213,7 +257,6 @@ class Agent:
                 if result.media_paths:
                     all_media.extend(result.media_paths)
 
-                # Keep tool payloads bounded for the model context
                 content = result.to_llm()
                 if len(content) > 12000:
                     content = content[:12000] + "...[truncated]"
@@ -227,7 +270,6 @@ class Agent:
                     }
                 )
 
-            # Soft stop if the model is stuck failing
             if consecutive_fails >= 5:
                 messages.append(
                     {

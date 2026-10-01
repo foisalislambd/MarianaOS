@@ -14,7 +14,8 @@ from config.providers import ResolvedLLM, list_providers, resolve_llm
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT_DIR / ".env")
+# Prefer .env over leftover process env (e.g. IDE / prior shell tests)
+load_dotenv(ROOT_DIR / ".env", override=True)
 
 
 def _env(key: str, default: str = "") -> str:
