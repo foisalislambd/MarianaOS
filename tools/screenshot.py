@@ -83,6 +83,58 @@ class TakeScreenshotTool(BaseTool):
         )
 
 
+class CaptureWindowTool(BaseTool):
+    name = "capture_window"
+    description = (
+        "Screenshot a specific window by title (bounds capture). "
+        "Prefer get_ui_tree for normal UI work; use this when the user wants a window image."
+    )
+    parameters = [
+        ToolParam(name="title", type="string", description="Window title substring."),
+        ToolParam(
+            name="send_to_user",
+            type="boolean",
+            description="Attach image to Telegram reply. Default true.",
+            required=False,
+        ),
+    ]
+
+    def __init__(self, screenshot_dir: Path) -> None:
+        self.screenshot_dir = screenshot_dir
+        self.screenshot_dir.mkdir(parents=True, exist_ok=True)
+
+    async def execute(
+        self, title: str, send_to_user: bool = True, **_: Any
+    ) -> ToolResult:
+        from PIL import ImageGrab
+
+        from utils import win_ui
+
+        ok, name = win_ui.focus_window(title)
+        if not ok:
+            return ToolResult(success=False, output=name)
+        info = win_ui.get_active_window_info()
+        if not info:
+            return ToolResult(success=False, output="Could not read window bounds")
+        bbox = (
+            int(info["left"]),
+            int(info["top"]),
+            int(info["left"]) + int(info["width"]),
+            int(info["top"]) + int(info["height"]),
+        )
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_path = self.screenshot_dir / f"shot_{stamp}_window.png"
+        img = ImageGrab.grab(bbox=bbox, all_screens=True)
+        img.save(out_path, "PNG")
+        media = [str(out_path)] if send_to_user else []
+        return ToolResult(
+            success=True,
+            output=f"Captured window '{name}': {out_path}",
+            data={"path": str(out_path), "window": name, "bbox": list(bbox)},
+            media_paths=media,
+        )
+
+
 class ListScreenshotsTool(BaseTool):
     name = "list_screenshots"
     description = "List recent screenshot files saved by the agent."

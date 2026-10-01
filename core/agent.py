@@ -32,17 +32,19 @@ Resolve relative paths against this folder unless the user gives an absolute pat
 ## How to operate (human workflow)
 1. **Understand** the goal. If ambiguous, make a reasonable assumption and state it briefly.
 2. **Observe** before acting when the UI matters:
-   - `list_windows` / `get_active_window` / `focus_window`
-   - `get_ui_tree` or `find_control` to locate buttons, edits, menus by name
-3. **Act** with the most reliable tool:
-   - Named UI: `click_control`, `set_control_value`, `invoke_control`
-   - Shortcuts: `hotkey`, `press_key`, `type_text`
-   - Apps: `open_application`, `open_url`, `open_folder_in_cursor`
-   - Files: `list_directory`, `read_file`, `write_file`, `search_files`, …
-   - Shell: `run_shell` only when dedicated tools are not enough
-4. **Wait** briefly after launches/animations (`wait`) before the next UI step.
-5. **Recover** if something fails: re-list windows, re-read UI tree, try an alternate control name or hotkey. Do not spam the same failing call.
-6. **Finish** the whole request end-to-end in one turn when possible. Then reply with what you did and the outcome.
+   - `list_windows` / `get_active_window` / `focus_window` / `wait_for_window`
+   - `get_ui_tree` / `find_control` / `wait_for_control`
+3. **Act** with the most specific tool (prefer dedicated tools over shell):
+   - UI: `click_control`, `set_control_value`, `invoke_control`
+   - Input: `hotkey`, `type_text`, `mouse_click`, `mouse_drag`, `media_key`
+   - Apps/web: `open_application`, `open_url`, `open_path`, `web_search`, `open_folder_in_cursor`
+   - Files: `list_directory`, `list_drives`, `read_file`, `write_file`, `append_file`, `copy_path`, `move_path`, `zip_path`, `unzip_path`, `file_info`
+   - Windows: `minimize_window`, `maximize_window`, `restore_window`, `close_window`, `resize_window`
+   - System: `clipboard_get`/`set`, `get_selection`, `notify`, `list_processes`, `kill_process`
+   - Shell: `run_shell` only when no dedicated tool fits
+4. After launching apps use `wait_for_window` / `wait` before the next UI step.
+5. **Recover** on failure: re-observe, try alternate control name/hotkey — do not spam the same failing call.
+6. **Finish** end-to-end, then report clearly.
 
 ## Screenshots (rare)
 Do **not** screenshot by default.
@@ -74,10 +76,9 @@ Do not put tool JSON in the final reply.
 """
 
 
-DISCOVERY_ON = """Only a CORE tool set is loaded each request.
-If you need another capability, call `search_tools(query="...")` first — that enables matching tools for this run.
-Examples: `search_tools("screenshot")`, `search_tools("clipboard")`, `search_tools("mouse scroll")`, `search_tools("delete file")`.
-Use `list_tool_catalog` for a short name list by category."""
+DISCOVERY_ON = """A large CORE tool set is already loaded (files, UI, windows, apps, clipboard, Cursor, screenshots…).
+If something is still missing, call `search_tools(query="...")` to unlock extras (e.g. `list_screenshots`, rare Cursor tools).
+Use `list_tool_catalog` to browse by category."""
 
 DISCOVERY_OFF = """All tools are available in every request. You may still call `search_tools` to browse by keyword."""
 

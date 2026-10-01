@@ -14,7 +14,6 @@ class ToolResult:
     success: bool
     output: str
     data: Dict[str, Any] = field(default_factory=dict)
-    # Optional media to send back to the user (e.g. screenshot path)
     media_paths: List[str] = field(default_factory=list)
 
     def to_llm(self) -> str:
@@ -36,18 +35,15 @@ class ToolParam:
     description: str
     required: bool = True
     enum: Optional[List[str]] = None
-    items_type: Optional[str] = None  # for type=array
+    items_type: Optional[str] = None
 
 
 class BaseTool(ABC):
     name: str = ""
     description: str = ""
     parameters: List[ToolParam] = []
-    # If True, agent may ask user confirmation when REQUIRE_CONFIRMATION is on
     destructive: bool = False
-    # Group for search_tools / discovery (filesystem, cursor, screen, …)
     category: str = "general"
-    # Always expose schema even when TOOL_DISCOVERY is on
     always_on: bool = False
 
     @abstractmethod
@@ -94,40 +90,82 @@ class BaseTool(ABC):
         }
 
 
+# Large core set so the agent can work fluently without constant search_tools.
 DEFAULT_CORE_TOOLS: Set[str] = {
     # meta
     "search_tools",
     "list_tool_catalog",
-    # observe / UI
+    # windows
     "list_windows",
     "get_active_window",
     "focus_window",
+    "minimize_window",
+    "maximize_window",
+    "restore_window",
+    "close_window",
+    "resize_window",
+    "wait_for_window",
+    # UI automation
     "get_ui_tree",
     "find_control",
     "click_control",
     "set_control_value",
     "invoke_control",
+    "wait_for_control",
+    # input
     "hotkey",
     "press_key",
     "type_text",
+    "mouse_click",
+    "mouse_move",
+    "mouse_scroll",
+    "mouse_drag",
+    "get_mouse_position",
     "wait",
-    # apps / files
+    "media_key",
+    # apps / web
     "open_application",
     "open_url",
+    "open_path",
+    "web_search",
     "open_folder_in_cursor",
+    # files
     "list_directory",
+    "list_drives",
     "read_file",
     "write_file",
+    "append_file",
     "search_files",
+    "file_info",
+    "copy_path",
+    "move_path",
+    "delete_path",
+    "create_directory",
+    "open_in_explorer",
+    "zip_path",
+    "unzip_path",
+    # system
     "run_shell",
-    # cursor (python-first)
+    "system_info",
+    "list_processes",
+    "kill_process",
+    "clipboard_get",
+    "clipboard_set",
+    "get_selection",
+    "notify",
+    # screen (available; still prefer UI tools)
+    "take_screenshot",
+    "capture_window",
+    "analyze_screenshot",
+    # cursor
     "cursor_select_model",
     "cursor_get_model",
     "cursor_list_models",
     "cursor_list_chats",
     "cursor_open_chat_session",
     "cursor_type_in_chat",
-    # screenshots stay discoverable via search_tools("screenshot")
+    "cursor_open_chat",
+    "cursor_new_chat",
 }
 
 
@@ -141,7 +179,6 @@ class ToolRegistry:
         self._tools: Dict[str, BaseTool] = {}
         self.discovery = discovery
         self.core_tools: Set[str] = set(core_tools or DEFAULT_CORE_TOOLS)
-        # Enabled for the current agent run (reset each run)
         self._session_enabled: Set[str] = set()
 
     def register(self, tool: BaseTool) -> None:
@@ -172,7 +209,6 @@ class ToolRegistry:
         if not self.discovery:
             return set(self._tools.keys())
         names = set(self.core_tools) | set(self._session_enabled)
-        # always include tools marked always_on
         for t in self._tools.values():
             if t.always_on:
                 names.add(t.name)
@@ -180,7 +216,6 @@ class ToolRegistry:
 
     def openai_tools(self) -> List[Dict[str, Any]]:
         names = self.active_names()
-        # Stable order: core first, then alpha
         ordered = sorted(
             names,
             key=lambda n: (0 if n in self.core_tools else 1, n),
@@ -221,14 +256,11 @@ class ToolRegistry:
         if tool is None:
             return ToolResult(success=False, output=f"Unknown tool: {name}")
 
-        # Allow calling any registered tool even if not in active schemas
-        # (model may remember a name from search_tools). Auto-enable it.
         if self.discovery and name not in self.active_names():
             self._session_enabled.add(name)
 
         args = dict(arguments or {})
 
-        # Coerce LLM quirks: "false" string, 1.0 floats, etc.
         for key, value in list(args.items()):
             if isinstance(value, float) and value.is_integer():
                 args[key] = int(value)

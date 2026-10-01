@@ -90,3 +90,49 @@ class MaximizeWindowTool(BaseTool):
     async def execute(self, title: str, **_: Any) -> ToolResult:
         ok, msg = win_ui.maximize_window(title)
         return ToolResult(success=ok, output=f"Maximized: {msg}" if ok else msg)
+
+
+class RestoreWindowTool(BaseTool):
+    name = "restore_window"
+    description = "Restore a minimized/maximized window by title substring."
+    parameters = [
+        ToolParam(name="title", type="string", description="Window title substring."),
+    ]
+
+    async def execute(self, title: str, **_: Any) -> ToolResult:
+        ok, msg = win_ui.restore_window(title)
+        return ToolResult(success=ok, output=f"Restored: {msg}" if ok else msg)
+
+
+class CloseWindowTool(BaseTool):
+    name = "close_window"
+    description = "Close a window by title substring (Close / Alt+F4)."
+    destructive = True
+    parameters = [
+        ToolParam(name="title", type="string", description="Window title substring."),
+    ]
+
+    async def execute(self, title: str, **_: Any) -> ToolResult:
+        ok, msg = win_ui.close_window(title)
+        return ToolResult(success=ok, output=f"Closed: {msg}" if ok else msg)
+
+
+class ResizeWindowTool(BaseTool):
+    name = "resize_window"
+    description = "Move/resize a window: left, top, width, height in screen pixels."
+    parameters = [
+        ToolParam(name="title", type="string", description="Window title substring."),
+        ToolParam(name="left", type="integer", description="Left X."),
+        ToolParam(name="top", type="integer", description="Top Y."),
+        ToolParam(name="width", type="integer", description="Width."),
+        ToolParam(name="height", type="integer", description="Height."),
+    ]
+
+    async def execute(
+        self, title: str, left: int, top: int, width: int, height: int, **_: Any
+    ) -> ToolResult:
+        ok, msg = win_ui.resize_window(title, left, top, width, height)
+        return ToolResult(
+            success=ok,
+            output=f"Resized '{msg}' to {width}x{height} @({left},{top})" if ok else msg,
+        )

@@ -118,6 +118,73 @@ def maximize_window(title_substr: str) -> Tuple[bool, str]:
         return False, str(e)
 
 
+def restore_window(title_substr: str) -> Tuple[bool, str]:
+    win = find_window(title_substr)
+    if not win:
+        return False, f"No window matching '{title_substr}'"
+    try:
+        win.Restore()
+        return True, win.Name or title_substr
+    except Exception as e:
+        return False, str(e)
+
+
+def close_window(title_substr: str) -> Tuple[bool, str]:
+    win = find_window(title_substr)
+    if not win:
+        return False, f"No window matching '{title_substr}'"
+    name = win.Name or title_substr
+    try:
+        pattern = win.GetWindowPattern()
+        if pattern:
+            pattern.Close()
+            return True, name
+    except Exception:
+        pass
+    try:
+        focus_window(title_substr, timeout=1.0)
+        send_hotkey("alt", "f4")
+        return True, name
+    except Exception as e:
+        return False, str(e)
+
+
+def resize_window(
+    title_substr: str, left: int, top: int, width: int, height: int
+) -> Tuple[bool, str]:
+    win = find_window(title_substr)
+    if not win:
+        return False, f"No window matching '{title_substr}'"
+    try:
+        try:
+            if win.IsMaximize():
+                win.Restore()
+        except Exception:
+            pass
+        ok = win.MoveWindow(int(left), int(top), max(1, int(width)), max(1, int(height)))
+        if ok is False:
+            return False, f"MoveWindow returned False for '{win.Name or title_substr}'"
+        return True, win.Name or title_substr
+    except Exception as e:
+        return False, str(e)
+
+
+def wait_for_window(title_substr: str, timeout: float = 15.0) -> Tuple[bool, str]:
+    deadline = time.time() + max(0.5, timeout)
+    while time.time() < deadline:
+        win = find_window(title_substr, timeout=0.3)
+        if win:
+            return True, win.Name or title_substr
+        time.sleep(0.25)
+    return False, f"Timed out waiting for window '{title_substr}'"
+
+
+def drag_mouse(x1: int, y1: int, x2: int, y2: int, seconds: float = 0.4) -> None:
+    # moveSpeed ~ relative speed; keep modest for reliability
+    speed = max(0.5, min(float(seconds or 0.4) * 2.0, 4.0))
+    auto.DragDrop(int(x1), int(y1), int(x2), int(y2), moveSpeed=speed)
+
+
 def click_xy(x: int, y: int, button: str = "left", clicks: int = 1) -> None:
     btn = button.lower()
     n = max(1, min(int(clicks), 3))

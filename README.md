@@ -43,6 +43,10 @@ Telegram → `/start` → speak naturally, e.g.:
 
 While a task runs, tap **⏹ Stop** to cancel.
 
+## Capabilities (70+ tools)
+
+Files · drives · zip · UI Automation · windows · mouse/keyboard · clipboard · web search · Cursor IDE · screenshots · processes · notifications · shell
+
 ## Stack
 
 `aiogram` · `httpx` · `uiautomation` · `pillow` · `python-dotenv`
