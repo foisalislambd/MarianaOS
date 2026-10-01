@@ -6,7 +6,7 @@ import json
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 
 @dataclass
@@ -259,26 +259,3 @@ class ToolRegistry:
             return ToolResult(success=False, output=f"Invalid arguments for {name}: {e}")
         except Exception as e:
             return ToolResult(success=False, output=f"Tool {name} failed: {e}")
-
-
-def tool(
-    name: str,
-    description: str,
-    parameters: Optional[List[ToolParam]] = None,
-    destructive: bool = False,
-) -> Callable[[Callable[..., Any]], BaseTool]:
-    """Decorator to turn an async function into a BaseTool."""
-
-    def decorator(fn: Callable[..., Any]) -> BaseTool:
-        class _FnTool(BaseTool):
-            pass
-
-        instance = _FnTool()
-        instance.name = name
-        instance.description = description
-        instance.parameters = parameters or []
-        instance.destructive = destructive
-        instance.execute = fn  # type: ignore[method-assign]
-        return instance
-
-    return decorator

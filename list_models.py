@@ -32,7 +32,7 @@ from config.providers import (
 )
 from core.providers.factory import create_llm_provider
 
-load_dotenv(ROOT / ".env")
+load_dotenv(ROOT / ".env", override=True)
 
 
 def _env_key() -> str:

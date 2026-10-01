@@ -1,4 +1,4 @@
-"""LLM provider presets (OpenAI-compatible Chat Completions via httpx)."""
+"""LLM provider presets (OpenAI-compatible via httpx)."""
 
 from __future__ import annotations
 
@@ -38,7 +38,8 @@ _add(
             "HTTP-Referer": "https://github.com/marianaos-agent",
             "X-Title": "MarianaOS Agent",
         },
-        notes="Get key: https://openrouter.ai/keys — many models via one key",
+        notes="https://openrouter.ai/keys",
+        aliases=("gemini", "anthropic", "claude", "opencode", "zen", "oc"),
     )
 )
 _add(
@@ -48,7 +49,7 @@ _add(
         base_url="https://api.openai.com/v1",
         default_model="gpt-4o",
         default_vision_model="gpt-4o",
-        notes="Get key: https://platform.openai.com/api-keys",
+        notes="https://platform.openai.com/api-keys",
     )
 )
 _add(
@@ -58,7 +59,7 @@ _add(
         base_url="https://api.groq.com/openai/v1",
         default_model="llama-3.3-70b-versatile",
         default_vision_model="meta-llama/llama-4-scout-17b-16e-instruct",
-        notes="Get key: https://console.groq.com/keys",
+        notes="https://console.groq.com/keys",
     )
 )
 _add(
@@ -68,28 +69,7 @@ _add(
         base_url="https://api.deepseek.com",
         default_model="deepseek-chat",
         default_vision_model="deepseek-chat",
-        notes="Get key: https://platform.deepseek.com/",
-    )
-)
-_add(
-    ProviderPreset(
-        id="mistral",
-        name="Mistral AI",
-        base_url="https://api.mistral.ai/v1",
-        default_model="mistral-large-latest",
-        default_vision_model="pixtral-large-latest",
-        notes="Get key: https://console.mistral.ai/",
-    )
-)
-_add(
-    ProviderPreset(
-        id="xai",
-        name="xAI (Grok)",
-        base_url="https://api.x.ai/v1",
-        default_model="grok-2-latest",
-        default_vision_model="grok-2-vision-latest",
-        aliases=("grok",),
-        notes="Get key: https://console.x.ai/",
+        notes="https://platform.deepseek.com/",
     )
 )
 _add(
@@ -99,17 +79,7 @@ _add(
         base_url="http://127.0.0.1:11434/v1",
         default_model="llama3.2",
         default_vision_model="llava",
-        notes="Local Ollama. API key can be anything (e.g. ollama).",
-    )
-)
-_add(
-    ProviderPreset(
-        id="lmstudio",
-        name="LM Studio (local)",
-        base_url="http://127.0.0.1:1234/v1",
-        default_model="local-model",
-        default_vision_model="local-model",
-        notes="Enable local server in LM Studio.",
+        notes="Local Ollama server",
     )
 )
 _add(
@@ -119,29 +89,14 @@ _add(
         base_url="http://127.0.0.1:1234/v1",
         default_model="local-model",
         default_vision_model="local-model",
-        aliases=("custom", "compatible"),
-        notes="Set LLM_BASE_URL + LLM_MODEL yourself",
+        aliases=("custom", "lmstudio", "compatible"),
+        notes="Set LLM_BASE_URL + LLM_MODEL",
     )
 )
 
 
 def normalize_provider(name: str) -> str:
     key = (name or "openrouter").strip().lower().replace(" ", "_").replace("-", "_")
-    aliases = {
-        "claude": "openrouter",  # Claude via OpenRouter
-        "gemini": "openrouter",  # Gemini via OpenRouter
-        "google": "openrouter",
-        "anthropic": "openrouter",
-        # Removed native/free providers — use OpenRouter instead
-        "opencode": "openrouter",
-        "opencode_zen": "openrouter",
-        "zen": "openrouter",
-        "oc": "openrouter",
-        "grok": "xai",
-        "custom": "openai_compatible",
-        "compatible": "openai_compatible",
-    }
-    key = aliases.get(key, key)
     if key in PROVIDERS:
         return PROVIDERS[key].id
     return key
@@ -175,7 +130,7 @@ class ResolvedLLM:
 
 
 def provider_allows_empty_key(provider_id: str) -> bool:
-    return provider_id in {"ollama", "lmstudio"}
+    return provider_id in {"ollama", "openai_compatible"}
 
 
 def resolve_llm(
